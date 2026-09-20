@@ -142,6 +142,9 @@ fun HomeScreen(
     //    the list is calm and silent instead of re-tuning a stream on every keypress.
     var highlightedRow by remember { mutableStateOf<ChannelsViewModel.Row?>(null) }
     var selectedRow by remember { mutableStateOf<ChannelsViewModel.Row?>(null) }
+    // The channel key a click has "armed" — a second OK on that same still-armed channel is what
+    // goes full-screen; see onSelectChannel below. Cleared the moment the highlight moves off it.
+    var armedRow by remember { mutableStateOf<Any?>(null) }
     val previewSound by settings.guidePreviewSound.collectAsState()
     var nowMillis by remember { mutableLongStateOf(System.currentTimeMillis()) }
 
@@ -289,9 +292,14 @@ fun HomeScreen(
         }
         val channel = row.primary
         val source = graph.sourceRepository.byId(channel.sourceId)
+        // A Stalker channel's streamUrl is just a non-playable "stalker://…" marker — resolvePlaybackUrl
+        // mints the real, short-lived URL from its cmd, same as the full-screen player already does
+        // (PlayerScreen.kt). Skipping this here is exactly why the preview pane stayed blank for a
+        // Stalker source while full-screen worked fine.
+        val url = graph.catalogRepository.resolvePlaybackUrl(channel, source)
         previewController.play(
             PlayerController.Request(
-                url = channel.streamUrl,
+                url = url,
                 title = channel.shownName,
                 userAgent = source?.userAgent ?: "TufaraTV/0.1 (Android)",
                 isLive = true,
@@ -436,6 +444,10 @@ fun HomeScreen(
                 // Shared by both layouts: focus follows the highlight and collapses the rail; LEFT
                 // from the leftmost element reopens the rail (consumed only when it was hidden).
                 val onFocusChannel: (ChannelsViewModel.Row) -> Unit = {
+                    // Moving the highlight to a different channel resets the click-arm below — a
+                    // click on a channel you only just landed on is always a first click, never
+                    // accidentally treated as the second one from a click on it far earlier.
+                    if (highlightedRow?.key != it.key) armedRow = null
                     highlightedRow = it
                     railExpanded = false
                 }
@@ -448,15 +460,18 @@ fun HomeScreen(
                         false
                     }
                 }
+                // First OK on a channel just confirms it (the preview above already plays it, since
+                // it follows the highlight as you browse) — a second OK on that same still-armed
+                // channel is what actually goes full-screen. Long-press still reaches the
+                // Watch/Record now/Schedule/Record series menu at any point.
+                fun onSelectChannel(row: ChannelsViewModel.Row) {
+                    if (armedRow == row.key) goFullscreen(row.primary) else armedRow = row.key
+                }
                 if (channelLayout == AppSettings.ChannelLayout.LIST) {
                     ChannelList(
                         rows = rows,
                         selectedKey = highlightedRow?.key,
-                        // OK plays the channel straight away — the preview already follows the
-                        // highlight as you browse, so a click just promotes that into full-screen
-                        // instead of stopping on a dialog first. Long-press still reaches the
-                        // Watch/Record now/Schedule/Record series menu.
-                        onSelectRow = { row -> goFullscreen(row.primary) },
+                        onSelectRow = ::onSelectChannel,
                         onLongSelectRow = { row -> channelMenu = row },
                         onFocusRow = onFocusChannel,
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
@@ -469,10 +484,7 @@ fun HomeScreen(
                         windowStartMillis = windowStart,
                         dayOffset = guideDayOffset,
                         selectedKey = highlightedRow?.key,
-                        // OK plays the channel straight away; long-press opens its menu (Watch,
-                        // Record now, Schedule a later show, Record series). The preview already
-                        // follows the highlight as you browse.
-                        onSelectRow = { row -> goFullscreen(row.primary) },
+                        onSelectRow = ::onSelectChannel,
                         onLongSelectRow = { row -> channelMenu = row },
                         onFocusRow = onFocusChannel,
                         onProgramme = { row, programme -> recordTarget = row to programme },

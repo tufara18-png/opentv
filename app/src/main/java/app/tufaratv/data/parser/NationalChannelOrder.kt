@@ -71,11 +71,23 @@ object NationalChannelOrder {
      * curated list or the channel isn't a listed one — callers should keep such channels in their
      * existing relative order rather than treat null as "last", so an unlisted channel doesn't
      * jump around when the listed ones are reordered.
+     *
+     * Exact match first, then falls back to the longest listed entry [groupKey] *starts with* —
+     * confirmed necessary against a real provider's Canada bouquet, whose channels are regional
+     * feeds of the network, not the bare network name: `"CBC News"`, `"CBC Montreal"`, `"CBC
+     * Toronto"` (groupKeys `cbcnews`, `cbcmontreal`, `cbctoronto`…) never equal the curated bare
+     * `"cbc"` entry, so nothing matched at all and the shelf silently fell back to the provider's
+     * raw, effectively random order. A prefix match co-locates every regional feed of one network
+     * at that network's position — the same "can only add a match, never a wrong one" safety as
+     * everywhere else here, since these are short, well-known network call signs/brand names, not
+     * generic words a channel could coincidentally start with.
      */
     fun rank(countryCode: String, groupKey: String): Int? {
         val order = ORDER[countryCode] ?: return null
-        val index = order.indexOf(groupKey)
-        return index.takeIf { it >= 0 }
+        order.indexOf(groupKey).takeIf { it >= 0 }?.let { return it }
+        return order.indices
+            .filter { groupKey.startsWith(order[it]) }
+            .maxByOrNull { order[it].length }
     }
 
     /**
@@ -89,17 +101,30 @@ object NationalChannelOrder {
      * simply never matches (same reasoning as [rank]), so an incomplete list can't make ordering
      * worse than treating everything as English Canada already was.
      */
+    // "casa", "historia", "explora", bare "series" and bare "artv" deliberately left out even
+    // though they're real Québec channel names too — now that this is checked cross-shelf against
+    // every OTHER country's categories as well (see OpenTvViewModels' Québec-reroute filter), a
+    // generic word like "Historia" or "Casa" is a real Spanish/Italian channel brand too, and a
+    // false hit here wouldn't just mis-order the Canada shelf, it would steal that channel off its
+    // real one. Kept to the names distinctive enough that a collision is implausible.
     private val QUEBEC_CHANNELS = setOf(
-        "radiocanada", "icitele", "iciradiocanadatele", "tva", "tvasports", "tvasport",
-        "noovo", "telequebec", "rds", "rds2", "rdsinfo", "canalvie", "casa", "zeste",
-        "yoopa", "vrak", "unistv", "unis", "moietcie", "historia", "seriesplus", "series",
-        "iciexplora", "explora", "iciartv", "artv", "canald", "canalsavoir", "lcn",
+        "radiocanada", "ici", "icitele", "iciradiocanadatele", "tva", "tvasports", "tvasport",
+        "noovo", "telequebec", "rds", "rds2", "rdsinfo", "canalvie",
+        "yoopa", "vrak", "unistv", "unis", "moietcie", "seriesplus",
+        "iciexplora", "iciartv", "canald", "canalsavoir", "lcn",
         "addiktv", "ztele", "cinepop", "evasion", "musiqueplus", "matv", "prise2",
     )
 
-    /** Whether this channel is a known Québec broadcaster/specialty channel — see
-     *  [QUEBEC_CHANNELS]. */
-    fun isQuebecChannel(groupKey: String): Boolean = groupKey in QUEBEC_CHANNELS
+    /**
+     * Whether this channel is a known Québec broadcaster/specialty channel — see
+     * [QUEBEC_CHANNELS]. Exact match first, then the same longest-prefix fallback as [rank] and
+     * for the same confirmed-real reason: a provider's regional feeds — `"TVA Montreal"`, `"TVA
+     * Sherbrooke"`, `"ICI Tele Est-Quebec"`, `"Noovo Sherbrooke"` — never equal the bare curated
+     * name, so before this fallback most of a real Québec lineup silently failed to be recognised
+     * as Québec at all.
+     */
+    fun isQuebecChannel(groupKey: String): Boolean =
+        groupKey in QUEBEC_CHANNELS || QUEBEC_CHANNELS.any { groupKey.startsWith(it) }
 
     /**
      * Canada's second ordering axis, ahead of the shared General/Sport/Cinema/… type tiers:
@@ -117,4 +142,31 @@ object NationalChannelOrder {
         typeRank == CategoryContentType.SPORT.rank -> 1
         else -> 2
     }
+
+    /** Every known network brand for [countryCode] — [ORDER]'s own list, plus [QUEBEC_CHANNELS]
+     *  too when it's Canada, since a Québécois network is just as real a Canadian brand as an
+     *  English one. Used by [networkKey] to consolidate a network's regional repeaters down to
+     *  one feed. */
+    private fun networkBrands(countryCode: String): List<String> {
+        val base = ORDER[countryCode].orEmpty()
+        return if (countryCode == "CA") (base + QUEBEC_CHANNELS).distinct() else base
+    }
+
+    /**
+     * The network brand a channel's [groupKey] belongs to (`"cbc"`, `"tva"`, `"tf1"`…) within
+     * [countryCode]'s own curated [ORDER] list, longest match wins, or null when [countryCode]
+     * has no curated list at all or the channel isn't a recognised brand — every country here
+     * gets this for free the moment it has a named lineup, not just Canada. Confirmed necessary
+     * against a real Canadian provider: a single network ships one channel per city — `"CBC
+     * Montreal"`, `"CBC Toronto"`, `"CBC Ottawa"`, and likewise for CTV, TVA, ICI/Radio-Canada —
+     * a dozen-plus near-duplicate entries per network cluttering the shelf, not distinct channels
+     * a viewer wants a choice between the way a Quality switch is; the same regional-repeater
+     * pattern is just as real for any other country's network. [OpenTvViewModels]' consolidation
+     * step groups by this and keeps only one regional feed per network (see its own doc comment
+     * for which one).
+     */
+    fun networkKey(countryCode: String, groupKey: String): String? =
+        networkBrands(countryCode)
+            .filter { groupKey == it || groupKey.startsWith(it) }
+            .maxByOrNull { it.length }
 }

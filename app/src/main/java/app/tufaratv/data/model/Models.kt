@@ -314,6 +314,10 @@ data class Movie(
     val language: String? = null,
     /** Codec/HDR tag stripped from the raw title (`HEVC`, `HDR`…), same reasoning as [language]. */
     val codec: String? = null,
+    /** Stalker/Ministra-only: the play command a `vod` `create_link` call resolves to a real,
+     *  short-lived URL at play time — same reasoning as [Channel.cmd]. Null for Xtream/M3U movies,
+     *  which already carry a directly-playable [streamUrl]. */
+    val cmd: String? = null,
 )
 
 @Entity(
@@ -391,6 +395,8 @@ data class Episode(
     val qualityLabel: String = "",
     val language: String? = null,
     val codec: String? = null,
+    /** Stalker/Ministra-only — see [Movie.cmd]. Null for Xtream/M3U episodes. */
+    val cmd: String? = null,
 )
 
 /** How the canonical catalog groups a title: a film, or a show (whose episodes live in

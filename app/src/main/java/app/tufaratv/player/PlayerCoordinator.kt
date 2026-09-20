@@ -57,13 +57,18 @@ class PlayerCoordinator(
     private var isLive = true
     private var startPositionMillis = 0L
     private var userAgentFor: (SourceVariant) -> String = { "" }
+    private var resolveUrl: suspend (SourceVariant) -> String = { it.streamUrl }
     private var collectJob: Job? = null
+    private var playJob: Job? = null
 
     /**
      * Starts (or restarts, e.g. after a manual Source/Quality/Lecteur pick rebuilt [attempts])
      * playback from the top of the ladder. [startPositionMillis] is preserved across every
      * subsequent failover jump within this run — a jump is not a fresh play, so VOD resume
-     * position must not reset to zero partway through.
+     * position must not reset to zero partway through. [resolveUrl] turns a variant into the URL
+     * to actually feed the engine — most variants already carry a playable
+     * [SourceVariant.streamUrl] and don't need it, but a Stalker variant's `cmd` is short-lived
+     * and must be resolved right before this specific play, not when the variant list was built.
      */
     fun start(
         attempts: List<PlaybackAttempt>,
@@ -71,6 +76,7 @@ class PlayerCoordinator(
         isLive: Boolean,
         startPositionMillis: Long = 0L,
         userAgentFor: (SourceVariant) -> String,
+        resolveUrl: suspend (SourceVariant) -> String = { it.streamUrl },
     ) {
         this.attempts = attempts
         this.attemptIndex = 0
@@ -78,12 +84,15 @@ class PlayerCoordinator(
         this.isLive = isLive
         this.startPositionMillis = startPositionMillis
         this.userAgentFor = userAgentFor
+        this.resolveUrl = resolveUrl
         playCurrent()
     }
 
     fun stop() {
         collectJob?.cancel()
         collectJob = null
+        playJob?.cancel()
+        playJob = null
         media3.stop()
         vlc?.stop()
         attempts = emptyList()
@@ -127,15 +136,19 @@ class PlayerCoordinator(
                 }
             }
         }
-        engine.play(
-            EngineRequest(
-                url = attempt.variant.streamUrl,
-                title = title,
-                userAgent = userAgentFor(attempt.variant),
-                startPositionMillis = startPositionMillis,
-                isLive = isLive,
-            ),
-        )
+        playJob?.cancel()
+        playJob = scope.launch {
+            val url = runCatching { resolveUrl(attempt.variant) }.getOrDefault(attempt.variant.streamUrl)
+            engine.play(
+                EngineRequest(
+                    url = url,
+                    title = title,
+                    userAgent = userAgentFor(attempt.variant),
+                    startPositionMillis = startPositionMillis,
+                    isLive = isLive,
+                ),
+            )
+        }
     }
 
     private companion object {

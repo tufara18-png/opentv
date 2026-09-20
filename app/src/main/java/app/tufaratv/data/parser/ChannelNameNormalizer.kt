@@ -138,8 +138,26 @@ object ChannelNameNormalizer {
      */
     fun foldSuperscripts(raw: String): String {
         if (raw.none { it in SUPERSCRIPT_MAP }) return raw
-        return buildString(raw.length) {
-            for (c in raw) append(SUPERSCRIPT_MAP[c] ?: c)
+        // A real provider glues the decoration straight onto the preceding text with no
+        // separator at all — "France 2ᴴᴰ", "TF1ᴴᴰ" — so once folded to plain ASCII ("France
+        // 2HD", "TF1HD") the quality-token matcher, which only ever matches a whole token, never
+        // recognises "2HD"/"TF1HD" as carrying HD: the tag leaks into the base name instead of
+        // being stripped, and two spellings of the same channel (one plain, one decorated) end up
+        // with two different group keys — confirmed the real cause of a channel silently failing
+        // to fold its quality variants together. A space at every transition into or out of a
+        // superscript run restores the token boundary the provider never wrote, regardless of
+        // which side of it. Harmless when a real separator already existed (SKY ATLANTIC ᴴᴰ
+        // already had its own space; this just adds a second one the tokeniser's blank-filtering
+        // absorbs for free).
+        var prevWasSuperscript = false
+        return buildString(raw.length + 4) {
+            for (c in raw) {
+                val mapped = SUPERSCRIPT_MAP[c]
+                val isSuperscript = mapped != null
+                if (isSuperscript != prevWasSuperscript && isNotEmpty()) append(' ')
+                append(mapped ?: c)
+                prevWasSuperscript = isSuperscript
+            }
         }
     }
 

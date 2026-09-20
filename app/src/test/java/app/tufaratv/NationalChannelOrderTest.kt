@@ -34,6 +34,49 @@ class NationalChannelOrderTest {
     }
 
     @Test
+    fun `a regional feed ranks by its network's prefix, confirmed against real provider names`() {
+        // Real channel names from a live Stalker portal's "CANADA" bouquet: "CBC News", "CBC
+        // Montreal", "CBC Toronto", "CTV News", "CTV Toronto" — none equal the curated bare "cbc"
+        // / "ctv" entries, so before the prefix fallback every one of these ranked null and the
+        // shelf fell back to the provider's raw, effectively random order.
+        val cbcNews = NationalChannelOrder.rank("CA", "cbcnews")!!
+        val cbcMontreal = NationalChannelOrder.rank("CA", "cbcmontreal")!!
+        val cbcToronto = NationalChannelOrder.rank("CA", "cbctoronto")!!
+        val ctvNews = NationalChannelOrder.rank("CA", "ctvnews")!!
+        val ctvToronto = NationalChannelOrder.rank("CA", "ctvtoronto")!!
+        val bareCbc = NationalChannelOrder.rank("CA", "cbc")!!
+        val bareCtv = NationalChannelOrder.rank("CA", "ctv")!!
+
+        assertThat(cbcNews).isEqualTo(bareCbc)
+        assertThat(cbcMontreal).isEqualTo(bareCbc)
+        assertThat(cbcToronto).isEqualTo(bareCbc)
+        assertThat(ctvNews).isEqualTo(bareCtv)
+        assertThat(ctvToronto).isEqualTo(bareCtv)
+        assertThat(bareCbc).isLessThan(bareCtv)
+    }
+
+    @Test
+    fun `a prefix match never fires for an unrelated channel`() {
+        assertThat(NationalChannelOrder.rank("CA", "cbsnews")).isNull()
+        assertThat(NationalChannelOrder.rank("CA", "somelocalchannel")).isNull()
+    }
+
+    @Test
+    fun `networkKey works for any country with a curated lineup, not just Canada`() {
+        assertThat(NationalChannelOrder.networkKey("FR", "tf1paris")).isEqualTo("tf1")
+        assertThat(NationalChannelOrder.networkKey("FR", "france2lyon")).isEqualTo("france2")
+        assertThat(NationalChannelOrder.networkKey("GB", "bbc1london")).isEqualTo("bbc1")
+        assertThat(NationalChannelOrder.networkKey("CA", "tvasherbrooke")).isEqualTo("tva")
+        // Longest-prefix wins: "icitele" (7 chars) beats the shorter "ici" (3 chars).
+        assertThat(NationalChannelOrder.networkKey("CA", "icitelequebec")).isEqualTo("icitele")
+    }
+
+    @Test
+    fun `networkKey is null for a country with no curated lineup`() {
+        assertThat(NationalChannelOrder.networkKey("XX", "anything")).isNull()
+    }
+
+    @Test
     fun `known Quebec channels are recognized by name regardless of provider category`() {
         assertThat(NationalChannelOrder.isQuebecChannel("radiocanada")).isTrue()
         assertThat(NationalChannelOrder.isQuebecChannel("tva")).isTrue()

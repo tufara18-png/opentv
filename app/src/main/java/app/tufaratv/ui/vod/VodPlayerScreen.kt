@@ -325,6 +325,7 @@ fun VodPlayerScreen(
             isLive = false,
             startPositionMillis = resumeFrom,
             userAgentFor = { it.userAgent },
+            resolveUrl = graph.catalogRepository::resolveVariantPlaybackUrl,
         )
     }
 
@@ -444,7 +445,14 @@ fun VodPlayerScreen(
                             onClick = {
                                 val resumeFrom = controller.player.currentPosition.takeIf { it > 0 }
                                     ?: initialResumeMs ?: 0L
-                                coordinator.start(attempts, title, isLive = false, startPositionMillis = resumeFrom) { it.userAgent }
+                                coordinator.start(
+                                    attempts,
+                                    title,
+                                    isLive = false,
+                                    startPositionMillis = resumeFrom,
+                                    userAgentFor = { it.userAgent },
+                                    resolveUrl = graph.catalogRepository::resolveVariantPlaybackUrl,
+                                )
                             },
                         ) { Text(stringResource(R.string.common_try_again)) }
                     }

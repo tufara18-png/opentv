@@ -8,9 +8,15 @@ package app.tufaratv.data.remote
 import android.util.Log
 import app.tufaratv.data.model.Category
 import app.tufaratv.data.model.Channel
+import app.tufaratv.data.model.Movie
 import app.tufaratv.data.model.Source
 import app.tufaratv.data.model.StreamKind
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -108,15 +114,104 @@ class StalkerApi(
         }
     }
 
-    /** Mint the real, short-lived stream URL for a channel's [cmd]. Null if the portal declines. */
-    suspend fun createLink(source: Source, cmd: String): String? = withContext(Dispatchers.IO) {
-        val js = callRetrying(source, type = "itv", action = "create_link") { b ->
-            b.addQueryParameter("cmd", cmd)
-            b.addQueryParameter("forced_storage", "0")
-            b.addQueryParameter("disable_ad", "0")
+    /** Mint the real, short-lived stream URL for a channel's [cmd]. Null if the portal declines.
+     *  [type] is `"itv"` for a live channel, `"vod"` for a movie — a VOD source resolved as itv
+     *  (or vice versa) is a common reason a portal silently declines. */
+    suspend fun createLink(source: Source, cmd: String, type: String = "itv"): String? =
+        withContext(Dispatchers.IO) {
+            val js = callRetrying(source, type = type, action = "create_link") { b ->
+                b.addQueryParameter("cmd", cmd)
+                b.addQueryParameter("forced_storage", "0")
+                b.addQueryParameter("disable_ad", "0")
+            }
+            val linkCmd = (js as? JsonObject)?.str("cmd") ?: return@withContext null
+            stripCmdPrefix(linkCmd)
         }
-        val linkCmd = (js as? JsonObject)?.str("cmd") ?: return@withContext null
-        stripCmdPrefix(linkCmd)
+
+    /** VOD (movie) categories — same shape as [liveCategories], under the `vod` type. */
+    suspend fun vodCategories(source: Source): List<Category> = withContext(Dispatchers.IO) {
+        val arr = callRetrying(source, type = "vod", action = "get_categories") as? JsonArray
+            ?: return@withContext emptyList()
+        arr.mapIndexedNotNull { index, element ->
+            val o = element as? JsonObject ?: return@mapIndexedNotNull null
+            val id = o.str("id") ?: return@mapIndexedNotNull null
+            Category(id = id, sourceId = source.id, name = o.str("title") ?: id, kind = StreamKind.MOVIE, sortIndex = index)
+        }
+    }
+
+    /**
+     * Every VOD movie across every category, walking `get_ordered_list`'s pagination
+     * (`category=*` is the Ministra convention for "every category in one paginated sweep",
+     * avoiding one round trip per category). Each item's `cmd` is stored, not resolved here —
+     * [createLink] mints the real URL at play time, same reasoning as [liveChannels].
+     */
+    suspend fun vodMovies(source: Source): List<Movie> = withContext(Dispatchers.IO) {
+        val s = session(source)
+        fetchAllPages(source, type = "vod").mapNotNull { element ->
+            val o = element as? JsonObject ?: return@mapNotNull null
+            val id = o.str("id") ?: return@mapNotNull null
+            val name = o.str("name") ?: return@mapNotNull null
+            val cmd = o.str("cmd") ?: return@mapNotNull null
+            Movie(
+                sourceId = source.id,
+                streamId = id,
+                name = name,
+                categoryId = o.str("category_id"),
+                posterUrl = o.str("screenshot_uri")?.takeIf { it.isNotBlank() }
+                    ?.let { absoluteLogo(s.endpoint, it) },
+                rating = o.str("rating_imdb")?.toDoubleOrNull() ?: o.str("rating")?.toDoubleOrNull(),
+                year = o.str("year")?.toIntOrNull(),
+                plot = o.str("description"),
+                durationSeconds = o.str("time")?.toIntOrNull(),
+                containerExtension = null,
+                // Never played directly — see [liveChannels]'s identical marker for channels.
+                streamUrl = "stalker://${source.id}/vod/$id",
+                cast = o.str("actors"),
+                genre = o.str("genres_str"),
+                director = o.str("director"),
+                cmd = cmd,
+            )
+        }
+    }
+
+    /**
+     * Fetches every page of a `get_ordered_list` call (`category=*`, all categories). A real
+     * catalogue can report `total_items` in the tens of thousands at 14 items/page — over two
+     * thousand pages — and fetching those one at a time, sequentially, is the difference between
+     * a sync that finishes in a couple of minutes and one that's still running an hour later with
+     * nothing yet visible to show for it (confirmed against a real 33,802-item portal). The first
+     * page is fetched alone to learn `total_items`/`max_page_items`, then every remaining page is
+     * fetched concurrently, [PAGE_FETCH_CONCURRENCY] requests in flight at a time — enough to cut
+     * that wall-clock time by roughly the same factor without hammering the portal hard enough to
+     * risk it throttling or dropping the connection. Capped at [MAX_PAGES] as a last-resort safety
+     * net against a portal that never reports an accurate total — better an incomplete catalogue
+     * than a runaway fetch.
+     */
+    private suspend fun fetchAllPages(source: Source, type: String): List<JsonElement> = coroutineScope {
+        fun page(p: Int): JsonObject? =
+            callRetrying(source, type = type, action = "get_ordered_list") { b ->
+                b.addQueryParameter("category", "*")
+                b.addQueryParameter("p", p.toString())
+            } as? JsonObject
+
+        val first = page(1) ?: return@coroutineScope emptyList()
+        val firstData = first["data"] as? JsonArray ?: return@coroutineScope emptyList()
+        if (firstData.isEmpty()) return@coroutineScope emptyList()
+
+        val pageSize = first.str("max_page_items")?.toIntOrNull()?.takeIf { it > 0 } ?: firstData.size
+        val totalItems = first.str("total_items")?.toIntOrNull() ?: firstData.size
+        val totalPages = ((totalItems + pageSize - 1) / pageSize).coerceIn(1, MAX_PAGES)
+
+        val results = mutableListOf<JsonElement>()
+        results.addAll(firstData)
+        if (totalPages <= 1) return@coroutineScope results
+
+        val semaphore = Semaphore(PAGE_FETCH_CONCURRENCY)
+        val rest = (2..totalPages).map { p ->
+            async { semaphore.withPermit { page(p)?.get("data") as? JsonArray } }
+        }.awaitAll()
+        for (data in rest) if (data != null) results.addAll(data)
+        results
     }
 
     // ---- Session / handshake -----------------------------------------------------------------
@@ -332,6 +427,8 @@ class StalkerApi(
     private companion object {
         const val TAG = "StalkerApi"
         const val TOKEN_TTL_MILLIS = 4 * 60 * 1000L // handshake tokens are short-lived; re-mint often
+        const val MAX_PAGES = 4000 // safety cap for fetchAllPages — see its doc comment
+        const val PAGE_FETCH_CONCURRENCY = 8 // concurrent page requests — see fetchAllPages
         const val DEFAULT_STB_UA =
             "Mozilla/5.0 (QtEmbedded; U; Linux; C) AppleWebKit/533.3 (KHTML, like Gecko) " +
                 "MAG200 stbapp ver: 2 rev: 250 Safari/533.3"

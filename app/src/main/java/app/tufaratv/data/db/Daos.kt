@@ -916,7 +916,7 @@ interface CanonicalMovieDao {
         SELECT movies.sourceId AS sourceId, sources.name AS sourceName, movies.streamId AS streamId,
                movies.qualityLabel AS quality, movies.qualityRank AS qualityRank,
                movies.language AS language, movies.codec AS codec,
-               movies.streamUrl AS streamUrl, sources.userAgent AS userAgent, NULL AS cmd
+               movies.streamUrl AS streamUrl, sources.userAgent AS userAgent, movies.cmd AS cmd
         FROM movies JOIN sources ON sources.id = movies.sourceId
         WHERE movies.canonicalId = :canonicalId
         ORDER BY movies.qualityRank DESC
@@ -1033,7 +1033,7 @@ interface CanonicalEpisodeDao {
         SELECT episodes.sourceId AS sourceId, sources.name AS sourceName, episodes.episodeId AS streamId,
                episodes.qualityLabel AS quality, episodes.qualityRank AS qualityRank,
                episodes.language AS language, episodes.codec AS codec,
-               episodes.streamUrl AS streamUrl, sources.userAgent AS userAgent, NULL AS cmd
+               episodes.streamUrl AS streamUrl, sources.userAgent AS userAgent, episodes.cmd AS cmd
         FROM episodes JOIN sources ON sources.id = episodes.sourceId
         WHERE episodes.canonicalEpisodeId = :canonicalEpisodeId
         ORDER BY episodes.qualityRank DESC

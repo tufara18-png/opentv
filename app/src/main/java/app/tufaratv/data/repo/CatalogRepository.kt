@@ -1101,8 +1101,13 @@ class CatalogRepository(
     /** Movies + series — best-effort, meant to run in the background so a huge VOD list never
      * blocks live TV. Silent on failure: an account with no VOD is normal, not an error. */
     suspend fun syncVod(source: Source, nowUtcMillis: Long) = withContext(Dispatchers.IO) {
-        runCatching { if (source.kind == SourceKind.XTREAM) syncXtreamVod(source, nowUtcMillis) }
-            .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+        runCatching {
+            when (source.kind) {
+                SourceKind.XTREAM -> syncXtreamVod(source, nowUtcMillis)
+                SourceKind.STALKER -> syncStalkerVod(source)
+                SourceKind.M3U -> {}
+            }
+        }.onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
     }
 
     private suspend fun syncXtreamLive(source: Source, nowUtcMillis: Long): SyncResult {
@@ -1188,6 +1193,38 @@ class CatalogRepository(
         if (series.isNotEmpty()) seriesDao.upsertAll(stampedSeriesQuality(series))
         if (movies.isNotEmpty()) linkMoviesToCanonical(source.id)
         if (series.isNotEmpty()) linkSeriesToCanonical(source.id)
+    }
+
+    /**
+     * Stalker/Ministra VOD sync — movies only for now. Series needs its own pass: a Stalker
+     * portal's `series` catalogue entries are typically per-season, not per-title, and playing an
+     * episode needs its own `cmd` resolution step that hasn't been verified against a real portal
+     * yet; shipping that half-built would show a series as "available" with nothing playable in
+     * it, worse than not listing it. Movies have no such structure — one `cmd` per title, resolved
+     * at play time by [resolveVariantPlaybackUrl] exactly like a Stalker live channel.
+     */
+    private suspend fun syncStalkerVod(source: Source) {
+        if (!settings.moviesEnabled.value) return
+        val movieCategories = runCatching { stalkerApi.vodCategories(source) }.getOrDefault(emptyList())
+        val movies = runCatching { stalkerApi.vodMovies(source) }.getOrDefault(emptyList())
+        if (movieCategories.isNotEmpty()) categoryDao.upsertAll(movieCategories)
+        if (movies.isNotEmpty()) {
+            movieDao.upsertAll(stampedMovieQuality(movies))
+            linkMoviesToCanonical(source.id)
+        }
+    }
+
+    /**
+     * The URL to actually feed the player for a [SourceVariant] — the VOD analogue of
+     * [resolvePlaybackUrl]. A Stalker movie's [SourceVariant.cmd] is short-lived, same reasoning
+     * as a Stalker channel, so it's resolved now, at play time, not when the variant list was
+     * built. Xtream/M3U variants carry no `cmd` and just return their already-playable
+     * [SourceVariant.streamUrl] unchanged.
+     */
+    suspend fun resolveVariantPlaybackUrl(variant: SourceVariant): String {
+        val cmd = variant.cmd?.takeIf { it.isNotBlank() } ?: return variant.streamUrl
+        val source = sourceDao.byId(variant.sourceId) ?: return variant.streamUrl
+        return runCatching { stalkerApi.createLink(source, cmd, type = "vod") }.getOrNull() ?: variant.streamUrl
     }
 
     /**

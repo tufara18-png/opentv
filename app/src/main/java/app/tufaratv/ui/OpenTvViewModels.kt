@@ -292,7 +292,11 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         for (category in raw) {
             val n = ChannelNameNormalizer.normalize(category.name)
             val trimmedBase = n.baseName.trim()
+            // resolveKnownBouquet catches a curated brand name with no country/language word at
+            // all in it ("DISNEY+", "TSN+") — see its own doc comment for why it's a separate
+            // map from the generic resolve() one word-boundary matching relies on.
             val bareCountry = CountryResolver.resolve(trimmedBase)
+                ?: CountryResolver.resolveKnownBouquet(trimmedBase)
             // A leading tag ChannelNameNormalizer strips on its own (`FR|`, `[UK]`, a bare code
             // plus punctuation) resolves via `n.region`. `MULTI` doesn't go through that path —
             // at 5 letters it's outside COUNTRY_PREFIX's 2-3 letter window, and real bouquets
@@ -307,13 +311,25 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
             val leadingWord = trimmedBase.substringBefore(' ')
             val leadingWordGroup = (n.region == null && leadingWord != trimmedBase)
                 .let { hasMore -> if (hasMore) CountryResolver.resolve(leadingWord) else null }
+            // Last resort: the country isn't the whole name, a leading tag, or the leading word —
+            // it's just *a* word somewhere inside a free-text bouquet name a real provider wrote
+            // by hand ("Elite Cinema FR", "DAZN PORTUGAL", "LOCALS USA"). Confirmed against a real
+            // catalogue: dozens of that provider's own per-country bouquets had no leading-tag
+            // signal at all and were each sitting as their own stray, ungrouped rail entry.
+            val anyTokenMatch = if (bareCountry == null && n.region == null && leadingWordGroup == null) {
+                CountryResolver.resolveAnyToken(trimmedBase)
+            } else {
+                null
+            }
             val regionCountry = bareCountry
                 ?: n.region?.let { CountryResolver.resolve(it) }
                 ?: leadingWordGroup
+                ?: anyTokenMatch?.first
             val strippedContent = when {
                 bareCountry != null -> ""
                 n.region != null -> CategoryNameCleaner.stripRedundantRegion(n.baseName, n.region)
                 leadingWordGroup != null -> trimmedBase.removePrefix(leadingWord).trim()
+                anyTokenMatch != null -> anyTokenMatch.second
                 else -> n.baseName
             }
             // The leftover content is itself just the group's name spelled out in a way
@@ -444,6 +460,13 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val query: String,
         val hiddenIds: Set<String>,
         val quebecByCategoryId: Map<String, Boolean>,
+        /** Only non-empty when this is the "CA" group: every OTHER group's category ids, so a
+         *  Québec channel a provider filed inside a France (or any other) bouquet by name alone —
+         *  confirmed real: one provider's "FRENCH" bouquet has a whole "QUEBEC" section inside it,
+         *  TVA/ICI Télé/Noovo mixed in with actual France channels, no separate category at all —
+         *  can still be pulled into the Canada shelf instead of staying stuck wherever its
+         *  category happened to fold. See [rows]'s channelFlow and the Québec reroute filter. */
+        val otherGroupsCategoryIds: List<String> = emptyList(),
     )
 
     private data class ManagerRowsKey(
@@ -487,9 +510,15 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         combine(selectedCategory, favouritesOnly, query, categoryGroups, hiddenCategoryIds) {
                 category, favs, q, groups, hidden ->
             val group = category?.let { key -> groups.firstOrNull { it.key == key } }
+            // Only the Canada shelf needs this — see RowsKey's doc comment on the field.
+            val otherIds = if (group?.key == "CA") {
+                groups.filter { it.key != "CA" }.flatMap { it.ids }
+            } else {
+                emptyList()
+            }
             RowsKey(
                 group?.ids, group?.typeRankByCategoryId.orEmpty(), group?.key, favs, q, hidden,
-                group?.quebecByCategoryId.orEmpty(),
+                group?.quebecByCategoryId.orEmpty(), otherIds,
             )
         }
             .combine(selectedSource) { key, source -> key to source }
@@ -497,7 +526,12 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                 val channelFlow = when {
                     key.query.isNotBlank() -> graph.catalogRepository.searchChannels(key.query)
                     key.favs -> graph.catalogRepository.observeFavouriteChannels()
-                    key.categoryIds != null -> graph.catalogRepository.observeChannelsIn(key.categoryIds)
+                    // The Canada shelf also pulls every OTHER group's categories here, so a Québec
+                    // channel filed by name alone inside some other bouquet (see RowsKey's doc
+                    // comment) is in the pool to reroute below — never shown twice, since the
+                    // reroute filter drops anything not actually Québec from that extra pool.
+                    key.categoryIds != null ->
+                        graph.catalogRepository.observeChannelsIn(key.categoryIds + key.otherGroupsCategoryIds)
                     else -> graph.catalogRepository.observeChannels(source)
                 }
                 // Combine the (per-category) channel list with the shared, already-grouped
@@ -518,14 +552,56 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                     val visible =
                         if (key.hiddenIds.isEmpty()) scoped
                         else scoped.filter { it.categoryId !in key.hiddenIds }
+                    // Québec reroute: a channel a provider filed by name alone inside another
+                    // country's bouquet (confirmed real — see RowsKey's doc comment) belongs on
+                    // the Canada shelf regardless of which category it physically sits in, and
+                    // must NOT also show on that other shelf. The Canada branch's channelFlow
+                    // already pulled in every other group's categories (see channelFlow above),
+                    // so here it's just: keep this shelf's own channels, plus any Québec-named
+                    // channel from elsewhere. Every other shelf keeps its own channels minus any
+                    // Québec-named one (which belongs on Canada, not here).
+                    val rerouted = when (key.countryCode) {
+                        "CA" -> visible.filter {
+                            it.categoryId in (key.categoryIds ?: emptyList()) ||
+                                NationalChannelOrder.isQuebecChannel(it.groupKey)
+                        }
+                        null -> visible
+                        else -> visible.filterNot { NationalChannelOrder.isQuebecChannel(it.groupKey) }
+                    }
+                    // Regional-repeater consolidation, every country with a curated lineup, not
+                    // just Canada: a real network ships one channel per city — "CBC Montreal",
+                    // "CBC Toronto", "CBC Ottawa", "TVA Sherbrooke", "TVA Gatineau"… — a
+                    // dozen-plus regional repeaters per network, not distinct channels a viewer is
+                    // choosing between. Group by network brand (NationalChannelOrder.networkKey)
+                    // and keep only ONE regional feed per network: the one named "Montreal" when
+                    // there is one AND this is Canada (the country's largest media market, and
+                    // confirmed the one this user actually wants for Canada specifically), else
+                    // the shortest/least city-qualified name as the general-purpose proxy for
+                    // "the flagship feed" everywhere else. A channel whose network isn't
+                    // recognised — or a country with no curated lineup at all — is untouched,
+                    // same "can only ever help, an unmatched one keeps its prior behaviour" rule
+                    // as everywhere else here.
+                    val consolidated = key.countryCode?.let { code ->
+                        rerouted.groupBy { NationalChannelOrder.networkKey(code, it.groupKey) ?: it.id }
+                            .values.flatMap { sameNetwork ->
+                                val byRegion = sameNetwork.groupBy { it.groupKey }
+                                if (byRegion.size <= 1) {
+                                    sameNetwork
+                                } else {
+                                    val flagshipKey = byRegion.keys.firstOrNull { code == "CA" && "montreal" in it }
+                                        ?: byRegion.keys.minBy { it.length }
+                                    byRegion.getValue(flagshipKey)
+                                }
+                            }
+                    } ?: rerouted
                     // Show the size-aware loading bar for the FIRST guide build only (start-up).
                     // After that the guide is built and flicking between categories is cheap, so
                     // don't flash a loading line on every tap — that bar was only ever meant for
                     // the one-time heavy load, and leaking it per-category read as a stuck "100%".
                     val firstBuild = !guideBuilt
-                    if (firstBuild) StatusBus.set(sizeMessage(visible.size), 0f)
+                    if (firstBuild) StatusBus.set(sizeMessage(consolidated.size), 0f)
                     buildRows(
-                        visible, byEpgChannel, now,
+                        consolidated, byEpgChannel, now,
                         reportProgress = firstBuild,
                         typeRankByCategoryId = key.typeRankByCategoryId,
                         countryCode = key.countryCode,

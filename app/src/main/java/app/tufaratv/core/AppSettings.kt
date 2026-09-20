@@ -397,11 +397,13 @@ class AppSettings private constructor(context: Context) {
         set(value) { prefs.edit().putLong(KEY_VOD_SYNCED_AT, value).apply() }
 
     /**
-     * The user's own TMDB API key (v3 auth), stored on-device only exactly like provider
-     * credentials, used to fill in artwork/metadata a provider left blank. Blank = the TMDB
-     * fallback is off. Each user brings their own key, so no single key carries everyone's traffic.
+     * The TMDB API key (v3 auth) used to fill in artwork/metadata a provider left blank, and to
+     * drive the TMDB-first Movies/Shows catalogue. Ships with a default key baked into the app —
+     * explicitly requested, knowing this repo is public and the key is visible to anyone who
+     * looks — so the app works out of the box with no setup step. Settings still lets a user
+     * override it with their own key; that override always wins over the built-in default.
      */
-    private val _tmdbApiKey = MutableStateFlow(prefs.getString(KEY_TMDB_KEY, "").orEmpty())
+    private val _tmdbApiKey = MutableStateFlow(prefs.getString(KEY_TMDB_KEY, DEFAULT_TMDB_KEY).orEmpty())
     val tmdbApiKey: StateFlow<String> = _tmdbApiKey.asStateFlow()
 
     fun setTmdbApiKey(key: String) {
@@ -524,6 +526,9 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_NAS_AUTO_SYNC = "nas_auto_sync"
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
+        // Baked-in default so the TMDB-first catalogue works with no setup step — see the doc
+        // comment on _tmdbApiKey for why this is a deliberate, public key.
+        private const val DEFAULT_TMDB_KEY = "9cbb3977d74b67ad7bbd138c59a9820c"
         private const val KEY_STREMIO_ADDONS = "stremio_addons"
         private const val KEY_PAD_START = "rec_pad_start_min"
         private const val KEY_PAD_END = "rec_pad_end_min"

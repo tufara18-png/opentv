@@ -68,4 +68,54 @@ class CountryResolverTest {
         assertThat(CountryResolver.resolve("US")?.displayName).isEqualTo("États-Unis")
         assertThat(CountryResolver.resolve("DE")?.displayName).isEqualTo("Allemagne")
     }
+
+    @Test
+    fun `resolveAnyToken finds a country buried in a free-text bouquet name`() {
+        val (country, leftover) = CountryResolver.resolveAnyToken("Elite Cinema FR")!!
+        assertThat(country.code).isEqualTo("FR")
+        assertThat(leftover).isEqualTo("Elite Cinema")
+
+        assertThat(CountryResolver.resolveAnyToken("DAZN PORTUGAL")!!.first.code).isEqualTo("PT")
+        assertThat(CountryResolver.resolveAnyToken("LOCALS USA")!!.first.code).isEqualTo("US")
+    }
+
+    @Test
+    fun `resolveAnyToken never partial-matches a word that only contains a code`() {
+        assertThat(CountryResolver.resolveAnyToken("FRANCE24")).isNull()
+        assertThat(CountryResolver.resolveAnyToken("INFO CHANNEL")).isNull()
+    }
+
+    @Test
+    fun `newly added Latin American and other countries resolve`() {
+        assertThat(CountryResolver.resolve("Colombia")?.code).isEqualTo("CO")
+        assertThat(CountryResolver.resolve("Venezuela")?.code).isEqualTo("VE")
+        assertThat(CountryResolver.resolve("Chile")?.code).isEqualTo("CL")
+        assertThat(CountryResolver.resolve("Peru")?.code).isEqualTo("PE")
+        assertThat(CountryResolver.resolve("Republica Dominicana")?.code).isEqualTo("DO")
+        assertThat(CountryResolver.resolve("Haiti")?.code).isEqualTo("HT")
+        assertThat(CountryResolver.resolve("Israel")?.code).isEqualTo("IL")
+        assertThat(CountryResolver.resolve("Filipino")?.code).isEqualTo("PH")
+        assertThat(CountryResolver.resolve("Greek")?.code).isEqualTo("GR")
+        assertThat(CountryResolver.resolve("Nederland")?.code).isEqualTo("NL")
+        assertThat(CountryResolver.resolve("Portuguese")?.code).isEqualTo("PT")
+    }
+
+    @Test
+    fun `curated bouquet-name overrides resolve from real content inspection`() {
+        assertThat(CountryResolver.resolve("MAJIK FILM")?.code).isEqualTo("FR")
+        assertThat(CountryResolver.resolveKnownBouquet("DISNEY+")?.code).isEqualTo("FR")
+        assertThat(CountryResolver.resolveKnownBouquet("TSN+")?.code).isEqualTo("CA")
+        assertThat(CountryResolver.resolve("LATINO LOCAL")?.displayName).isEqualTo("Latino")
+        assertThat(CountryResolver.resolve("MAJIK PELICULAS")?.displayName).isEqualTo("Latino")
+    }
+
+    @Test
+    fun `a qualified Disney bouquet is untouched by the bare Disney override`() {
+        // The bare-brand override is whole-string-only and its own map — it must never leak into
+        // resolve() or resolveAnyToken()'s per-token scan, or "DISNEY+ SPAIN" would wrongly
+        // resolve as France via its first token instead of Spain via its second.
+        assertThat(CountryResolver.resolve("DISNEY+ SPAIN")).isNull()
+        assertThat(CountryResolver.resolveKnownBouquet("DISNEY+ SPAIN")).isNull()
+        assertThat(CountryResolver.resolveAnyToken("DISNEY+ SPAIN")!!.first.code).isEqualTo("ES")
+    }
 }

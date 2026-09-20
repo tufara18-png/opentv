@@ -103,6 +103,22 @@ class ChannelNameNormalizerTest {
     }
 
     @Test
+    fun `a superscript decoration glued directly onto the name with no separator still folds`() {
+        // Real provider data, no space at all before the decoration — confirmed the reason
+        // "France 2" and "France 2ᴴᴰ" used to land in two different groups instead of one.
+        val plain = ChannelNameNormalizer.normalize("FRANCE 2")
+        val glued = ChannelNameNormalizer.normalize("France 2ᴴᴰ")
+
+        assertThat(glued.groupKey).isEqualTo(plain.groupKey)
+        assertThat(glued.qualityRank).isEqualTo(200)
+
+        val tf1Plain = ChannelNameNormalizer.normalize("TF1")
+        val tf1Glued = ChannelNameNormalizer.normalize("TF1ᴴᴰ")
+        assertThat(tf1Glued.groupKey).isEqualTo(tf1Plain.groupKey)
+        assertThat(tf1Glued.qualityRank).isEqualTo(200)
+    }
+
+    @Test
     fun `broadcaster names that look like prefixes are left alone`() {
         // Four-letter and pipe-less names must not lose their first word.
         assertThat(ChannelNameNormalizer.normalize("BEIN| SPORTS 1 HD").baseName)
