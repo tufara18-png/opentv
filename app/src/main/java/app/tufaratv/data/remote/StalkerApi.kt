@@ -273,19 +273,35 @@ class StalkerApi(
             .build()
         return runCatching {
             http.newCall(request).execute().use { response ->
-                if (!response.isSuccessful) return null
+                if (!response.isSuccessful) {
+                    Log.w(TAG, "Stalker $url -> HTTP ${response.code} ${response.message}")
+                    return null
+                }
                 val text = response.body?.string().orEmpty()
-                if (text.isBlank()) return null
+                if (text.isBlank()) {
+                    Log.w(TAG, "Stalker $url -> HTTP ${response.code} but blank body")
+                    return null
+                }
                 json.parseToJsonElement(text)
             }
-        }.onFailure { Log.w(TAG, "Stalker request failed", it) }.getOrNull()
+        }.onFailure { Log.w(TAG, "Stalker request failed: $url", it) }.getOrNull()
     }
 
     /** Candidate API endpoints for a portal URL, most common first. First that handshakes wins. */
     private fun endpoints(source: Source): List<HttpUrl> {
         val raw = source.url.trim().trimEnd('/')
         // A portal URL is often given as ".../c" (the web-client path); the API lives at the root.
-        val root = raw.removeSuffix("/c").trimEnd('/')
+        // Just as often, though, it's given as the literal script URL a provider's panel prints —
+        // ".../portal.php" or one of the other candidates below — since that's exactly what many
+        // providers hand a subscriber to copy-paste. Strip that too, or every candidate below
+        // doubles up into "...portal.php/portal.php" and 404s across the board (confirmed live).
+        val root = raw.removeSuffix("/c")
+            .removeSuffix("/portal.php")
+            .removeSuffix("/c/portal.php")
+            .removeSuffix("/server/load.php")
+            .removeSuffix("/stalker_portal/server/load.php")
+            .removeSuffix("/magLoad.php")
+            .trimEnd('/')
         return listOf(
             "$root/portal.php",
             "$root/c/portal.php",
