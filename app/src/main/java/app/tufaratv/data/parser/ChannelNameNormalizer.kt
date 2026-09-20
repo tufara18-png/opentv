@@ -69,11 +69,15 @@ object ChannelNameNormalizer {
         return base + match.groupValues[2].length
     }
 
-    /** Tokens that describe the stream but not its resolution. Stripped, kept in the label. */
+    /** Tokens that describe the stream but not its resolution. Stripped, kept in the label.
+     *  "WEB" is a real, recurring provider tag (`"RDS WEB"` next to `"RDS HD"`, `"ICI Tele WEB
+     *  HD"`) — confirmed the same class of bug as an unrecognised superscript glue: an
+     *  unrecognised token leaks into the base name instead of being stripped, so the same channel
+     *  gets a different groupKey per source tag and never folds its variants together. */
     private val EXTRA_TOKENS = setOf(
         "RAW", "HEVC", "H265", "H.265", "H264", "H.264", "AV1",
         "50FPS", "60FPS", "25FPS", "30FPS", "FPS",
-        "HDR", "DOLBY", "VISION", "PLUS",
+        "HDR", "DOLBY", "VISION", "PLUS", "WEB",
     )
 
     /**
@@ -174,6 +178,14 @@ object ChannelNameNormalizer {
     fun normalize(raw: String): Normalized {
         // Fold superscript decorations (ᴴᴰ → HD) so the token pass can see them.
         var working = foldSuperscripts(raw.trim())
+
+        // Split CamelCase BEFORE the quality-token pass below, not just at groupKeyOf's own
+        // separate splitting — a plain, non-superscript glue with no separator at all
+        // ("CanadaHD", "MontrealHD", confirmed real) would otherwise survive the quality pass as
+        // one unrecognised token (the tag never gets stripped, the base name stays ugly) and only
+        // get split apart later, purely for the group key, once it's too late to matter for
+        // either the display name or the quality rank.
+        working = CAMEL_BOUNDARY.replace(working, "$1 $2")
 
         // Country prefix BEFORE decoration stripping: the brackets in `[UK]` are the
         // delimiter, and the decoration pass would eat them and lose the tag.

@@ -119,6 +119,24 @@ class ChannelNameNormalizerTest {
     }
 
     @Test
+    fun `WEB is recognised as a stripped stream marker, not part of the channel name`() {
+        // Real provider data: "RDS WEB" next to "RDS HD" — both must fold to the same channel.
+        val web = ChannelNameNormalizer.normalize("RDS WEB")
+        val hd = ChannelNameNormalizer.normalize("RDS HD")
+        assertThat(web.groupKey).isEqualTo(hd.groupKey)
+        assertThat(web.baseName).isEqualTo("RDS")
+    }
+
+    @Test
+    fun `a plain camelCase quality suffix with no separator at all still folds`() {
+        // No superscript involved this time — literal ASCII glued with zero separator.
+        val plain = ChannelNameNormalizer.normalize("Canada")
+        val glued = ChannelNameNormalizer.normalize("CanadaHD")
+        assertThat(glued.groupKey).isEqualTo(plain.groupKey)
+        assertThat(glued.qualityRank).isEqualTo(200)
+    }
+
+    @Test
     fun `broadcaster names that look like prefixes are left alone`() {
         // Four-letter and pipe-less names must not lose their first word.
         assertThat(ChannelNameNormalizer.normalize("BEIN| SPORTS 1 HD").baseName)
