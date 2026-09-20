@@ -5,7 +5,7 @@
       exists only so the window has a sensible background before Compose takes over, which
       stops the white flash on launch that looks awful on a TV.
     -->
-    <style name="Theme.OpenTV" parent="android:Theme.Material.NoActionBar">
+    <style name="Theme.TufaraTV" parent="android:Theme.Material.NoActionBar">
         <item name="android:windowBackground">@color/window_background</item>
         <item name="android:statusBarColor">@android:color/transparent</item>
         <item name="android:navigationBarColor">@android:color/transparent</item>

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
-  This file is part of OpenTV.
+  This file is part of TufaraTV, a fork of OpenTV.
   Copyright (C) 2026 The OpenTV Contributors
   Licensed under the GNU General Public License v3.0 or later.
 -->
@@ -52,13 +52,13 @@
         android:required="false" />
 
     <application
-        android:name=".OpenTvApp"
+        android:name=".TufaraTvApp"
         android:allowBackup="true"
         android:banner="@drawable/banner"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:supportsRtl="true"
-        android:theme="@style/Theme.OpenTV"
+        android:theme="@style/Theme.TufaraTV"
         android:usesCleartextTraffic="true"
         tools:targetApi="34">
 
@@ -76,7 +76,7 @@
             android:resizeableActivity="true"
             android:supportsPictureInPicture="true"
             android:screenOrientation="fullUser"
-            android:theme="@style/Theme.OpenTV">
+            android:theme="@style/Theme.TufaraTV">
 
             <!-- Phones and tablets -->
             <intent-filter>

@@ -1,18 +1,23 @@
-# OpenTV
+# TufaraTV
 
 **A free, open-source IPTV player for Android TV, Fire TV, phones and tablets.**
 
 No account. No subscription. No server of ours between you and your provider.
 
-[![Build](https://github.com/opentvproject/opentv/actions/workflows/build.yml/badge.svg)](https://github.com/opentvproject/opentv/actions/workflows/build.yml)
+> TufaraTV is a fork of [OpenTV](https://github.com/opentvproject/opentv) (GPLv3), built on top
+> of its player/EPG/recording core and extended with a canonical multi-source catalog: the same
+> movie or show from several IPTV providers is merged into one entry with switchable sources,
+> qualities and a resilient player.
+
+[![Build](https://github.com/tufara18-png/opentv/actions/workflows/build.yml/badge.svg)](https://github.com/tufara18-png/opentv/actions/workflows/build.yml)
 [![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](LICENSE)
-[![GitHub Sponsors](https://img.shields.io/badge/GitHub-Sponsors-ea4aaa.svg)](https://github.com/sponsors/legionnaireneyland)
 
 ---
 
-> **Support OpenTV** — it's free and always will be. If it saved you from a dead "lifetime"
-> app, you can chip in via **[GitHub Sponsors](https://github.com/sponsors/legionnaireneyland)**
-> or **[PayPal](https://www.paypal.com/donate/?business=leetobin1982@gmail.com&item_name=Support+OpenTV&no_recurring=0&currency_code=GBP)**.
+> The donation links below are the upstream **OpenTV** project's — this fork does not collect
+> its own donations. If TufaraTV is useful to you, consider supporting the project it's built
+> on: **[GitHub Sponsors](https://github.com/sponsors/legionnaireneyland)** or
+> **[PayPal](https://www.paypal.com/donate/?business=leetobin1982@gmail.com&item_name=Support+OpenTV&no_recurring=0&currency_code=GBP)**.
 > Entirely optional; the app is never paywalled.
 
 ## Why this exists
@@ -27,9 +32,9 @@ but *access*: the code is closed, so nobody else can pick it up.
 
 OpenTV is the same category of app built so that cannot happen. The source is public and
 GPL-licensed. If the current maintainers vanish tomorrow, anyone can fork it, build it and
-keep it alive. That is the entire point.
-
-**OpenTV is not a fork or a decompilation of any existing app.** It is written from scratch.
+keep it alive — this repository is exactly that: OpenTV itself was written from scratch (not a
+fork or decompilation of anything), and TufaraTV forks *it*, under the same GPLv3 terms, for the
+same reason.
 
 ## What it does
 

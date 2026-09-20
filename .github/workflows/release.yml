@@ -59,9 +59,9 @@ jobs:
             exit 1
           fi
           mkdir -p dist
-          cp "$SOURCE" "dist/opentv-${TAG}.apk"
-          cp "$SOURCE" "dist/opentv.apk"
-          echo "path=dist/opentv-${TAG}.apk" >> "$GITHUB_OUTPUT"
+          cp "$SOURCE" "dist/tufaratv-${TAG}.apk"
+          cp "$SOURCE" "dist/tufaratv.apk"
+          echo "path=dist/tufaratv-${TAG}.apk" >> "$GITHUB_OUTPUT"
           echo "signed=$([ -n "$KEYSTORE_PATH" ] && echo yes || echo debug-key)" >> "$GITHUB_OUTPUT"
 
       - name: Release notes from CHANGELOG

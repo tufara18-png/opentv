@@ -9,17 +9,17 @@
     android:viewportWidth="108"
     android:viewportHeight="108">
     <path
-        android:strokeColor="#4B5DB8"
+        android:strokeColor="#8F6A1C"
         android:strokeWidth="4"
         android:strokeLineCap="round"
         android:pathData="M44,33 L54,42" />
     <path
-        android:strokeColor="#4B5DB8"
+        android:strokeColor="#8F6A1C"
         android:strokeWidth="4"
         android:strokeLineCap="round"
         android:pathData="M64,33 L54,42" />
     <path
-        android:fillColor="#7C93FF"
+        android:fillColor="#E50914"
         android:pathData="M30,42h48a7,7 0,0 1,7 7v26a7,7 0,0 1,-7 7h-48a7,7 0,0 1,-7 -7v-26a7,7 0,0 1,7 -7z" />
     <path
         android:fillColor="#07080C"

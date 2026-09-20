@@ -26,4 +26,4 @@ body:
     attributes:
       label: Scope check
       options:
-        - label: This does not require OpenTV to run a server
+        - label: This does not require TufaraTV to run a server
