@@ -1,5 +1,52 @@
 # Changelog
 
+## 0.12.0
+
+**TufaraTV** — this fork's own identity: rebranded from OpenTV (new package, icon, colours), and a
+TMDB-first rebuild of Movies and Shows so the catalogue you browse no longer depends on any one
+provider's own categories.
+
+### Movies & Shows
+
+- **TMDB drives the catalogue, providers only supply playback.** Movies and Shows now show TMDB's
+  own Trending/Popular/New/Top-rated rows, genre rails (Action, Comédie, Horreur, …), and full
+  detail pages — all of it visible whether or not a synced playlist happens to carry a given title.
+  Opening a title resolves an already-synced playable source locally, with no network call to a
+  provider at click time.
+- **Movies only offer sources in French, Italian, or a multi-language copy.** A source in another
+  language is never offered as a choice; a title only available in one is shown as unavailable
+  rather than handed over anyway.
+- **Everything TMDB returns comes back in your language** — titles, synopses, cast and genre names,
+  not just the browse labels.
+
+### Live TV
+
+- **Channels group by country, not by provider category**, in a real-world lineup order (TNT/general
+  first, then sport, then cinema) — the same shelf whichever provider supplied a given channel.
+- **Canada orders Québec channels first** — general and specialty alike (Radio-Canada, TVA, RDS,
+  AddikTV, ARTV, Canal D, Canal Vie, Yoopa, …) — then English-Canada sport, then the rest of
+  English-Canada, recognised by channel name so it holds regardless of how a given provider tags
+  its categories.
+- **A channel plays immediately on click**, full-screen, instead of opening a menu first; long-press
+  still reaches Watch/Record/Schedule.
+- **An on-screen guide overlay** while watching live — current programme, progress, and what's on
+  next — without leaving full-screen.
+- Back from a movie, series, or live channel detail page returns to that same tab, not to Live TV.
+
+### Channel management
+
+- **Hide a whole country/category at once** from the channel manager, not just one channel at a
+  time — and it stays hidden even once a later sync adds a new channel to that category.
+- The live guide's sidebar drops a group entirely once every one of its channels is hidden, instead
+  of leaving an entry that opens onto an empty guide.
+- Removed the "All channels" entry — the guide now opens straight on the first real category.
+
+### Also in this release
+
+- Netflix-style black-and-red theme throughout.
+- Full Stalker Portal support (MAG-box device identity, portal URL + MAC login) alongside Xtream
+  and M3U, unchanged from upstream OpenTV.
+
 ## 0.11.8
 
 - **Edit a saved provider.** Settings → Providers now has an **Edit** button on each provider, so you
