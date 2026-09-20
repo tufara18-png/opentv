@@ -245,6 +245,11 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val label: String,
         val ids: List<String>,
         val typeRankByCategoryId: Map<String, Int> = emptyMap(),
+        /** Which of this group's own categories were specifically Québec-tagged (`QC`), as
+         *  opposed to a generic Canada/English-Canada one — only ever non-empty for the "CA"
+         *  group. Powers Canada's Québec-first, then Anglo-sport, then Anglo-rest ordering in
+         *  [buildRows]; see [NationalChannelOrder]'s Canada doc comment. */
+        val quebecByCategoryId: Map<String, Boolean> = emptyMap(),
     )
 
     val categoryGroups: StateFlow<List<CategoryGroup>> =
@@ -277,7 +282,12 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
      * still gets its own shelf rather than being silently dropped.
      */
     private fun foldCategories(raw: List<Category>): List<CategoryGroup> {
-        data class Entry(val label: String, val ids: MutableList<String>, val typeRank: MutableMap<String, Int>)
+        data class Entry(
+            val label: String,
+            val ids: MutableList<String>,
+            val typeRank: MutableMap<String, Int>,
+            val quebec: MutableMap<String, Boolean> = mutableMapOf(),
+        )
         val groups = LinkedHashMap<String, Entry>()
         for (category in raw) {
             val n = ChannelNameNormalizer.normalize(category.name)
@@ -320,8 +330,18 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
             val entry = groups.getOrPut(key) { Entry(label, mutableListOf(), mutableMapOf()) }
             entry.ids += category.id
             entry.typeRank[category.id] = CategoryContentClassifier.classify(content).rank
+            // Which signal actually produced a "CA" match — the raw tag, a bare "QC" bouquet name,
+            // or a leading "QC" word — was specifically Québec, as opposed to a generic Canada/
+            // English-Canada one (`CountryResolver` folds both to the same "CA" code, so that
+            // distinction is otherwise lost right here). Only meaningful for the "CA" group; see
+            // [NationalChannelOrder]'s Canada doc comment for what it drives.
+            if (key == "CA") {
+                entry.quebec[category.id] = n.region.equals("QC", ignoreCase = true) ||
+                    leadingWord.equals("QC", ignoreCase = true) ||
+                    trimmedBase.equals("QC", ignoreCase = true)
+            }
         }
-        return groups.map { (key, e) -> CategoryGroup(key, e.label, e.ids, e.typeRank) }
+        return groups.map { (key, e) -> CategoryGroup(key, e.label, e.ids, e.typeRank, e.quebec) }
     }
 
     /**
@@ -423,6 +443,7 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val favs: Boolean,
         val query: String,
         val hiddenIds: Set<String>,
+        val quebecByCategoryId: Map<String, Boolean>,
     )
 
     private data class ManagerRowsKey(
@@ -430,6 +451,7 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val ids: List<String>?,
         val typeRankByCategoryId: Map<String, Int>,
         val countryCode: String?,
+        val quebecByCategoryId: Map<String, Boolean>,
     )
 
     /**
@@ -465,7 +487,10 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         combine(selectedCategory, favouritesOnly, query, categoryGroups, hiddenCategoryIds) {
                 category, favs, q, groups, hidden ->
             val group = category?.let { key -> groups.firstOrNull { it.key == key } }
-            RowsKey(group?.ids, group?.typeRankByCategoryId.orEmpty(), group?.key, favs, q, hidden)
+            RowsKey(
+                group?.ids, group?.typeRankByCategoryId.orEmpty(), group?.key, favs, q, hidden,
+                group?.quebecByCategoryId.orEmpty(),
+            )
         }
             .combine(selectedSource) { key, source -> key to source }
             .flatMapLatest { (key, source) ->
@@ -504,6 +529,7 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                         reportProgress = firstBuild,
                         typeRankByCategoryId = key.typeRankByCategoryId,
                         countryCode = key.countryCode,
+                        quebecByCategoryId = key.quebecByCategoryId,
                     )
                 }
             }
@@ -523,6 +549,7 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         reportProgress: Boolean = false,
         typeRankByCategoryId: Map<String, Int> = emptyMap(),
         countryCode: String? = null,
+        quebecByCategoryId: Map<String, Boolean> = emptyMap(),
     ): List<Row> {
         // A merged country shelf spans several of the provider's own bouquets (General, Sport,
         // Cinema, …, see [foldCategories]) — order by each channel's *bouquet* rank before
@@ -532,10 +559,29 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         // sorts by its real lineup position instead of the provider's own arbitrary bouquet order.
         // A channel neither map covers keeps its incoming order, since `sortedWith` is stable and
         // every unmapped key sorts equal to every other unmapped key.
+        //
+        // Canada gets one more axis ahead of all of that: Québec first (general and specialized
+        // alike — the type-tier below still sub-orders within it), then English-Canada sport, then
+        // the rest of English-Canada — see [NationalChannelOrder.canadaTier]. A no-op (always 0)
+        // for every other country, so this doesn't disturb their ordering at all.
         val ordered =
             if (typeRankByCategoryId.isEmpty()) channels
             else channels.sortedWith(
                 compareBy(
+                    {
+                        if (countryCode == "CA") {
+                            NationalChannelOrder.canadaTier(
+                                // Name match first — it's the signal that survives however a
+                                // given provider organized its categories; the tag is only a
+                                // fallback for a title an unavoidably incomplete name list missed.
+                                isQuebec = NationalChannelOrder.isQuebecChannel(it.groupKey) ||
+                                    quebecByCategoryId[it.categoryId] == true,
+                                typeRank = typeRankByCategoryId[it.categoryId] ?: Int.MAX_VALUE,
+                            )
+                        } else {
+                            0
+                        }
+                    },
                     { typeRankByCategoryId[it.categoryId] ?: Int.MAX_VALUE },
                     { countryCode?.let { code -> NationalChannelOrder.rank(code, it.groupKey) } ?: Int.MAX_VALUE },
                 ),
@@ -717,7 +763,10 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
     val managerRows: StateFlow<List<Row>> =
         combine(managerSelectedSource, managerSelectedCategory, managerCategoryGroups) { source, key, groups ->
             val group = key?.let { k -> groups.firstOrNull { it.key == k } }
-            ManagerRowsKey(source, group?.ids, group?.typeRankByCategoryId.orEmpty(), group?.key)
+            ManagerRowsKey(
+                source, group?.ids, group?.typeRankByCategoryId.orEmpty(), group?.key,
+                group?.quebecByCategoryId.orEmpty(),
+            )
         }
             .distinctUntilChanged()
             .flatMapLatest { managerKey ->
@@ -728,6 +777,7 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                             channels, emptyMap(), System.currentTimeMillis(),
                             typeRankByCategoryId = managerKey.typeRankByCategoryId,
                             countryCode = managerKey.countryCode,
+                            quebecByCategoryId = managerKey.quebecByCategoryId,
                         )
                     }
             }
@@ -750,15 +800,19 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /** Hide or show every channel in a whole group at once — the manager's "hide this group"
-     *  toggle. Two things happen together: every currently-known channel in the group gets the
-     *  same per-channel flag [setRowHidden] uses (so the manager's own per-channel switches stay
-     *  accurate and un-hiding one by one still works), and the group's key is recorded as a
-     *  standing preference in [AppSettings.manuallyHiddenGroups] (so the guide's rail keeps
-     *  treating it as hidden even once a later sync adds a channel to it that this bulk pass
-     *  never saw — see [visibleCategoryGroups]). */
-    fun setGroupHidden(groupKey: String, rows: List<Row>, hidden: Boolean) {
+     *  toggle. Two things happen together: every channel across the group's raw category ids gets
+     *  the same per-channel flag [setRowHidden] uses, straight by categoryId (see
+     *  [CatalogRepository.setChannelsHiddenForCategories]) rather than through the manager's
+     *  `Row`/`distinctByQuality` view — that view collapses same-name, same-quality duplicates
+     *  down to one representative, so driving the bulk hide off `row.variants` silently skipped
+     *  whichever duplicate didn't survive the collapse (confirmed live: channels left over after
+     *  a "hide whole group"). And the group's key is recorded as a standing preference in
+     *  [AppSettings.manuallyHiddenGroups], so the guide's rail keeps treating it as hidden even
+     *  once a later sync adds a channel to one of its categories that this pass never saw — see
+     *  [visibleCategoryGroups]. */
+    fun setGroupHidden(groupKey: String, categoryIds: List<String>, hidden: Boolean) {
         viewModelScope.launch {
-            rows.forEach { row -> row.variants.forEach { graph.catalogRepository.setChannelHidden(it.id, hidden) } }
+            graph.catalogRepository.setChannelsHiddenForCategories(categoryIds, hidden)
         }
         val current = settings.manuallyHiddenGroups.value
         settings.setManuallyHiddenGroups(if (hidden) current + groupKey else current - groupKey)

@@ -204,16 +204,18 @@ fun ChannelManagerScreen(
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
                     )
                 } else {
+                    val selectedGroup = categoryGroups.firstOrNull { it.key == selectedCategory }
                     BrowsePane(
                         hasCategories = categoryGroups.isNotEmpty(),
                         categorySelected = selectedCategory != null,
-                        groupLabel = categoryGroups.firstOrNull { it.key == selectedCategory }?.label,
+                        groupLabel = selectedGroup?.label,
                         rows = browseRows,
                         onExitLeft = onExitLeftToRail,
                         onToggleHidden = { row, hidden -> viewModel.setRowHidden(row, !hidden) },
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
                         onToggleGroupHidden = { hidden ->
-                            selectedCategory?.let { viewModel.setGroupHidden(it, browseRows, hidden) }
+                            val group = selectedGroup ?: return@BrowsePane
+                            viewModel.setGroupHidden(group.key, group.ids, hidden)
                         },
                     )
                 }

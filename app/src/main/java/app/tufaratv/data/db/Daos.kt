@@ -200,6 +200,18 @@ interface ChannelDao {
     @Query("UPDATE channels SET hidden = :hidden WHERE id = :id")
     suspend fun setHidden(id: Long, hidden: Boolean)
 
+    /**
+     * Hides or shows every channel in a set of categories directly, by category id — not through
+     * a [Row]/`distinctByQuality` view. That view deliberately collapses same-name, same-quality
+     * duplicates (the same channel listed under two categories) down to one representative row,
+     * so a bulk hide driven by `row.variants` silently skips whichever duplicate didn't survive
+     * the collapse — confirmed live: a "hide whole group" left over a dozen channels still
+     * visible, all name/quality duplicates of already-hidden ones. Going straight at the table by
+     * categoryId can't miss a row that way.
+     */
+    @Query("UPDATE channels SET hidden = :hidden WHERE categoryId IN (:categoryIds)")
+    suspend fun setHiddenForCategories(categoryIds: List<String>, hidden: Boolean)
+
     @Query("UPDATE channels SET customName = :name WHERE id = :id")
     suspend fun setCustomName(id: Long, name: String?)
 

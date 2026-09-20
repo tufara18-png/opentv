@@ -32,4 +32,26 @@ class NationalChannelOrderTest {
     fun `a country with no curated lineup ranks everything null`() {
         assertThat(NationalChannelOrder.rank("DE", "tf1")).isNull()
     }
+
+    @Test
+    fun `known Quebec channels are recognized by name regardless of provider category`() {
+        assertThat(NationalChannelOrder.isQuebecChannel("radiocanada")).isTrue()
+        assertThat(NationalChannelOrder.isQuebecChannel("tva")).isTrue()
+        assertThat(NationalChannelOrder.isQuebecChannel("rds")).isTrue()
+        assertThat(NationalChannelOrder.isQuebecChannel("addiktv")).isTrue()
+        assertThat(NationalChannelOrder.isQuebecChannel("cbc")).isFalse()
+        assertThat(NationalChannelOrder.isQuebecChannel("ctv")).isFalse()
+    }
+
+    @Test
+    fun `canadaTier puts Quebec first regardless of content type`() {
+        val quebecGeneral = NationalChannelOrder.canadaTier(isQuebec = true, typeRank = 0)
+        val quebecSport = NationalChannelOrder.canadaTier(isQuebec = true, typeRank = 1)
+        val angloSport = NationalChannelOrder.canadaTier(isQuebec = false, typeRank = 1)
+        val angloGeneral = NationalChannelOrder.canadaTier(isQuebec = false, typeRank = 0)
+
+        assertThat(quebecGeneral).isEqualTo(quebecSport)
+        assertThat(quebecGeneral).isLessThan(angloSport)
+        assertThat(angloSport).isLessThan(angloGeneral)
+    }
 }

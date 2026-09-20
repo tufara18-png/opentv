@@ -77,4 +77,44 @@ object NationalChannelOrder {
         val index = order.indexOf(groupKey)
         return index.takeIf { it >= 0 }
     }
+
+    /**
+     * Well-known Québec broadcasters and cable specialty channels, by [ChannelNameNormalizer]
+     * group key — the signal Canada's Québec-first tiering (see [canadaTier]) actually keys on.
+     * Matched by name rather than by the provider's own category tag on purpose: real catalogues
+     * are wildly inconsistent about tagging Québec separately from English Canada at all (one
+     * provider's whole Canadian lineup showed up as a single untagged "CANADA" bouquet, no `QC`
+     * sub-category anywhere) — the way [ORDER] already has to work for every country's named
+     * lineup, not just Canada. An entry that doesn't match a given provider's exact spelling
+     * simply never matches (same reasoning as [rank]), so an incomplete list can't make ordering
+     * worse than treating everything as English Canada already was.
+     */
+    private val QUEBEC_CHANNELS = setOf(
+        "radiocanada", "icitele", "iciradiocanadatele", "tva", "tvasports", "tvasport",
+        "noovo", "telequebec", "rds", "rds2", "rdsinfo", "canalvie", "casa", "zeste",
+        "yoopa", "vrak", "unistv", "unis", "moietcie", "historia", "seriesplus", "series",
+        "iciexplora", "explora", "iciartv", "artv", "canald", "canalsavoir", "lcn",
+        "addiktv", "ztele", "cinepop", "evasion", "musiqueplus", "matv", "prise2",
+    )
+
+    /** Whether this channel is a known Québec broadcaster/specialty channel — see
+     *  [QUEBEC_CHANNELS]. */
+    fun isQuebecChannel(groupKey: String): Boolean = groupKey in QUEBEC_CHANNELS
+
+    /**
+     * Canada's second ordering axis, ahead of the shared General/Sport/Cinema/… type tiers:
+     * Québec first — general and specialized alike, since the type tier still sub-orders within
+     * it — then English-Canada sport, then the rest of English-Canada. Requested explicitly,
+     * distinct from every other country here, which only ever gets the type-tier-then-named-
+     * lineup ordering [rank] provides. [isQuebec] is true when either the channel matched
+     * [QUEBEC_CHANNELS] by name or its own category was specifically Québec-tagged (`QC`) —
+     * belt and suspenders, since `CountryResolver` folds both Québec and English-Canada bouquets
+     * to the same "CA" group code and a given provider might only give a reliable signal on one
+     * side or the other.
+     */
+    fun canadaTier(isQuebec: Boolean, typeRank: Int): Int = when {
+        isQuebec -> 0
+        typeRank == CategoryContentType.SPORT.rank -> 1
+        else -> 2
+    }
 }
