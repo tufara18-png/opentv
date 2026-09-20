@@ -288,9 +288,14 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
             // at 5 letters it's outside COUNTRY_PREFIX's 2-3 letter window, and real bouquets
             // write it with no separator at all (`"MULTI Chaines TV"`) — so it's read here as a
             // plain leading WORD instead, the one place this fold looks past the front of the
-            // string for something other than what ChannelNameNormalizer already found.
+            // string for something other than what ChannelNameNormalizer already found. Gated on
+            // `n.region == null`: when a tag WAS already found and stripped (say `EN|`) but just
+            // doesn't resolve to anything, the leftover content is content, not an unclaimed
+            // leading tag — `|EN| UK MOVIES` must not join the UK shelf just because its content
+            // happens to start with a country-shaped word, while its 60-odd `|EN| ...` siblings
+            // (COMEDY, DRAMA, NETFLIX, …) stay ungrouped. Confirmed against a real catalogue dump.
             val leadingWord = trimmedBase.substringBefore(' ')
-            val leadingWordGroup = (leadingWord != trimmedBase)
+            val leadingWordGroup = (n.region == null && leadingWord != trimmedBase)
                 .let { hasMore -> if (hasMore) CountryResolver.resolve(leadingWord) else null }
             val regionCountry = bareCountry
                 ?: n.region?.let { CountryResolver.resolve(it) }
@@ -331,8 +336,27 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
 
     /** The rail's view of categories: hidden ones drop out until the session is unlocked. */
     val visibleCategoryGroups: StateFlow<List<CategoryGroup>> =
-        combine(categoryGroups, settings.hiddenCategories, settings.hiddenUnlocked) { groups, hidden, unlocked ->
-            if (unlocked) groups else groups.filter { it.key !in hidden }
+        combine(
+            categoryGroups,
+            settings.hiddenCategories,
+            settings.hiddenUnlocked,
+            settings.manuallyHiddenGroups,
+            graph.catalogRepository.observeVisibleCategoryIds(),
+        ) { groups, hidden, unlocked, manuallyHidden, visibleIds ->
+            val afterAdultLock = if (unlocked) groups else groups.filter { it.key !in hidden }
+            afterAdultLock.filter { group ->
+                // Explicitly hidden whole (the manager's "Hide whole group") stays hidden even
+                // once a later sync adds a channel to one of its categories — this check is a
+                // standing group-key membership test, not derived from per-channel state, so a
+                // fresh row can never quietly bring the group back on its own.
+                group.key !in manuallyHidden &&
+                    // Otherwise: a group every one of whose channels is hidden (one at a time,
+                    // without the bulk toggle) still drops off the rail rather than sitting there
+                    // as a shelf that opens onto an empty guide. The manager's own rail is
+                    // unaffected — it uses [categoryGroups] directly, on purpose, since hidden
+                    // channels (and whole hidden groups) must stay reachable there to be un-hidden.
+                    group.ids.any { it in visibleIds }
+            }
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -725,6 +749,21 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /** Hide or show every channel in a whole group at once — the manager's "hide this group"
+     *  toggle. Two things happen together: every currently-known channel in the group gets the
+     *  same per-channel flag [setRowHidden] uses (so the manager's own per-channel switches stay
+     *  accurate and un-hiding one by one still works), and the group's key is recorded as a
+     *  standing preference in [AppSettings.manuallyHiddenGroups] (so the guide's rail keeps
+     *  treating it as hidden even once a later sync adds a channel to it that this bulk pass
+     *  never saw — see [visibleCategoryGroups]). */
+    fun setGroupHidden(groupKey: String, rows: List<Row>, hidden: Boolean) {
+        viewModelScope.launch {
+            rows.forEach { row -> row.variants.forEach { graph.catalogRepository.setChannelHidden(it.id, hidden) } }
+        }
+        val current = settings.manuallyHiddenGroups.value
+        settings.setManuallyHiddenGroups(if (hidden) current + groupKey else current - groupKey)
+    }
+
     fun toggleFavourite(row: Row) {
         viewModelScope.launch {
             // Favouriting the row favourites the logical channel: every variant follows,
@@ -850,6 +889,16 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
     val tmdbTopRatedSeries: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbTopRated(isMovie = false)) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** One shelf per TMDB genre — Action, Comédie, Horreur, etc. — the Netflix-style genre rail
+     *  under the curated Trending/Popular/New/Top-rated rows. */
+    val tmdbGenreRowsMovies: StateFlow<List<GenreGroup<TmdbListItem>>> =
+        flow { emit(graph.catalogRepository.tmdbGenreRows(isMovie = true)) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val tmdbGenreRowsSeries: StateFlow<List<GenreGroup<TmdbListItem>>> =
+        flow { emit(graph.catalogRepository.tmdbGenreRows(isMovie = false)) }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun tmdbConfigured(): Boolean = graph.catalogRepository.tmdbConfigured()

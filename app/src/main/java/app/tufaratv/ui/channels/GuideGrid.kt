@@ -5,9 +5,11 @@
  */
 package app.tufaratv.ui.channels
 
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -85,6 +87,9 @@ fun GuideGrid(
     onFocusRow: (ChannelsViewModel.Row) -> Unit,
     onProgramme: (ChannelsViewModel.Row, Programme) -> Unit = { _, _ -> },
     onToggleFavourite: (ChannelsViewModel.Row) -> Unit = {},
+    // Long-press reaches the Watch/Record now/Schedule/Record series menu — a plain click just
+    // plays the channel straight away, so browsing the guide never stops on a dialog first.
+    onLongSelectRow: (ChannelsViewModel.Row) -> Unit = {},
     // Returns true if it handled the key (rail was hidden, so consume it); false to let normal
     // left-navigation carry focus into the already-visible rail.
     onExitLeftFromChannel: () -> Boolean = { false },
@@ -114,6 +119,7 @@ fun GuideGrid(
                     scroll = scroll,
                     isSelected = row.key == selectedKey,
                     onSelect = { onSelectRow(row) },
+                    onLongSelect = { onLongSelectRow(row) },
                     onFocus = { onFocusRow(row) },
                     onProgramme = { programme -> onProgramme(row, programme) },
                     onToggleFavourite = { onToggleFavourite(row) },
@@ -139,6 +145,7 @@ fun ChannelList(
     onFocusRow: (ChannelsViewModel.Row) -> Unit,
     onToggleFavourite: (ChannelsViewModel.Row) -> Unit = {},
     onExitLeftFromChannel: () -> Boolean = { false },
+    onLongSelectRow: (ChannelsViewModel.Row) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val now = System.currentTimeMillis()
@@ -153,6 +160,7 @@ fun ChannelList(
                 nowMillis = now,
                 isSelected = row.key == selectedKey,
                 onSelect = { onSelectRow(row) },
+                onLongSelect = { onLongSelectRow(row) },
                 onFocus = { onFocusRow(row) },
                 onToggleFavourite = { onToggleFavourite(row) },
                 onExitLeft = onExitLeftFromChannel,
@@ -161,12 +169,14 @@ fun ChannelList(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun ChannelListRow(
     row: ChannelsViewModel.Row,
     nowMillis: Long,
     isSelected: Boolean,
     onSelect: () -> Unit,
+    onLongSelect: () -> Unit,
     onFocus: () -> Unit,
     onToggleFavourite: () -> Unit,
     onExitLeft: () -> Boolean,
@@ -192,7 +202,7 @@ private fun ChannelListRow(
                 focused = it.isFocused
                 if (it.isFocused) onFocus()
             }
-            .clickable(onClick = onSelect)
+            .combinedClickable(onClick = onSelect, onLongClick = onLongSelect)
             .padding(horizontal = 10.dp, vertical = 8.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -308,6 +318,7 @@ private fun TimeHeader(windowStartMillis: Long, scroll: androidx.compose.foundat
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun GuideRow(
     row: ChannelsViewModel.Row,
@@ -316,6 +327,7 @@ private fun GuideRow(
     scroll: androidx.compose.foundation.ScrollState,
     isSelected: Boolean,
     onSelect: () -> Unit,
+    onLongSelect: () -> Unit,
     onFocus: () -> Unit,
     onProgramme: (Programme) -> Unit,
     onToggleFavourite: () -> Unit = {},
@@ -353,7 +365,7 @@ private fun GuideRow(
                     focused = it.isFocused
                     if (it.isFocused) onFocus()
                 }
-                .clickable(onClick = onSelect)
+                .combinedClickable(onClick = onSelect, onLongClick = onLongSelect)
                 .padding(horizontal = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {

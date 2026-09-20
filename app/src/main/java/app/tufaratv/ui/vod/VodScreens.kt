@@ -59,6 +59,7 @@ import app.tufaratv.data.remote.TmdbListItem
 import app.tufaratv.data.model.Series
 import app.tufaratv.data.model.Source
 import app.tufaratv.data.parser.displayTitle
+import app.tufaratv.data.repo.GenreGroup
 import app.tufaratv.ui.VodViewModel
 import coil.compose.AsyncImage
 
@@ -83,6 +84,7 @@ fun MoviesScreen(
     val tmdbPopular by viewModel.tmdbPopularMovies.collectAsState()
     val tmdbNew by viewModel.tmdbNewMovies.collectAsState()
     val tmdbTopRated by viewModel.tmdbTopRatedMovies.collectAsState()
+    val tmdbGenreRows by viewModel.tmdbGenreRowsMovies.collectAsState()
 
     // Movies is a TMDB-first catalog now: Trending/Popular/New/Top-rated come straight from TMDB,
     // not from whatever a synced playlist happens to carry — see CatalogRepository's TMDB
@@ -92,7 +94,7 @@ fun MoviesScreen(
 
     val tmdbConfigured = remember { viewModel.tmdbConfigured() }
     val hasContent = resume.isNotEmpty() || tmdbTrending.isNotEmpty() || tmdbPopular.isNotEmpty() ||
-        tmdbNew.isNotEmpty() || tmdbTopRated.isNotEmpty()
+        tmdbNew.isNotEmpty() || tmdbTopRated.isNotEmpty() || tmdbGenreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
         SearchAffordance(onOpenSearch)
@@ -123,6 +125,9 @@ fun MoviesScreen(
                     if (tmdbTopRated.isNotEmpty()) item(key = "tmdb_top") {
                         TmdbPosterRow(stringResource(R.string.vod_tmdb_top_rated), tmdbTopRated, onOpenTmdb)
                     }
+                    items(tmdbGenreRows, key = { "genre_${it.genre}" }) { row ->
+                        TmdbPosterRow(row.genre, row.items, onOpenTmdb)
+                    }
                 }
             }
         }
@@ -149,12 +154,13 @@ fun SeriesScreen(
     val tmdbPopular by viewModel.tmdbPopularSeries.collectAsState()
     val tmdbNew by viewModel.tmdbNewSeries.collectAsState()
     val tmdbTopRated by viewModel.tmdbTopRatedSeries.collectAsState()
+    val tmdbGenreRows by viewModel.tmdbGenreRowsSeries.collectAsState()
 
     LaunchedEffect(Unit) { if (hasSources) viewModel.ensureVodLoaded() }
 
     val tmdbConfigured = remember { viewModel.tmdbConfigured() }
     val hasContent = resume.isNotEmpty() || tmdbTrending.isNotEmpty() || tmdbPopular.isNotEmpty() ||
-        tmdbNew.isNotEmpty() || tmdbTopRated.isNotEmpty()
+        tmdbNew.isNotEmpty() || tmdbTopRated.isNotEmpty() || tmdbGenreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
         SearchAffordance(onOpenSearch)
@@ -181,6 +187,9 @@ fun SeriesScreen(
                     }
                     if (tmdbTopRated.isNotEmpty()) item(key = "tmdb_top") {
                         TmdbPosterRow(stringResource(R.string.vod_tmdb_top_rated), tmdbTopRated, onOpenTmdb)
+                    }
+                    items(tmdbGenreRows, key = { "genre_${it.genre}" }) { row ->
+                        TmdbPosterRow(row.genre, row.items, onOpenTmdb)
                     }
                 }
             }

@@ -362,6 +362,8 @@
     <string name="channels_hidden">Masquée</string>
     <string name="channels_showing">Affichée</string>
     <string name="channels_show">Afficher</string>
+    <string name="channels_manager_hide_group">Masquer tout le groupe</string>
+    <string name="channels_manager_show_group">Afficher tout le groupe</string>
     <string name="search_type_name">Saisissez un nom</string>
     <string name="search_start_hint">Commencez à taper pour rechercher des chaînes, films et séries.</string>
     <string name="search_no_results">Aucun résultat pour « %1$s ».</string>

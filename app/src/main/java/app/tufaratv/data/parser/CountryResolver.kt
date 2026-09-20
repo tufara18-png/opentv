@@ -52,6 +52,7 @@ object CountryResolver {
         "PT" to "Portugal",
         "NL" to "Pays-Bas",
         "BE" to "Belgique",
+        "LU" to "Luxembourg",
         "CH" to "Suisse",
         "CA" to "Canada",
         "BR" to "Brésil",
@@ -107,8 +108,11 @@ object CountryResolver {
         alias("PT", "PORTUGAL")
         alias("NL", "NETHERLANDS", "HOLLAND", "PAYSBAS")
         alias("BE", "BELGIUM", "BELGIQUE")
+        alias("LU", "LUXEMBOURG", "LUXEMBURG")
         alias("CH", "SWITZERLAND", "SUISSE", "SCHWEIZ")
-        alias("CA", "CANADA")
+        // "QC" (Québec) has no country of its own — its IPTV content is Canadian, so it folds into
+        // the same shelf as a bare "CA" tag rather than scattering as its own ungrouped entries.
+        alias("CA", "CANADA", "QC")
         alias("BR", "BRAZIL", "BRASIL", "BRESIL")
         alias("PL", "POLAND", "POLSKA", "POLOGNE")
         alias("CZ", "CZECHIA", "CZECHREPUBLIC", "TCHEQUIE", "REPUBLIQUETCHEQUE")
@@ -129,7 +133,10 @@ object CountryResolver {
         alias("NO", "NORWAY", "NORVEGE")
         alias("DK", "DENMARK", "DANEMARK")
         alias("FI", "FINLAND", "FINLANDE")
-        alias("IE", "IRELAND", "IRLANDE")
+        // "IR" is ISO's code for Iran, but real IPTV bouquets overwhelmingly use it for Ireland
+        // instead (Iran doesn't appear in this catalogue's real provider data at all) — the same
+        // "go with what real bouquets actually mean" call already made for "AR" above.
+        alias("IE", "IRELAND", "IRLANDE", "IR")
         alias("AT", "AUSTRIA", "AUTRICHE")
         alias("HU", "HUNGARY", "HONGRIE")
         alias("BG", "BULGARIA", "BULGARIE")
@@ -142,7 +149,9 @@ object CountryResolver {
         alias("QA", "QATAR")
         alias("JP", "JAPAN", "JAPON")
         alias("KR", "SOUTHKOREA", "COREEDUSUD", "COREE")
-        alias("AF", "AFRICA", "AFRIQUE")
+        // Real providers spell this pseudo-region's tag both ways — "AF|" on VOD/series, "AFR|" on
+        // live TV, seen from the same catalogue — so both need to land on the same code.
+        alias("AF", "AFRICA", "AFRIQUE", "AFR")
     }
 
     private fun normalizeKey(text: String): String {

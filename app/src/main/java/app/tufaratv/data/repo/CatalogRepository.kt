@@ -45,6 +45,9 @@ import app.tufaratv.data.remote.XtreamApi
 import app.tufaratv.data.db.FtsQuery
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
@@ -133,6 +136,11 @@ private fun dedupeSeriesByCanonical(series: List<Series>): List<Series> {
 /** A standalone 4-digit release year (19xx/20xx) as it appears inside a VOD title. */
 private val VOD_YEAR = Regex("""\b(19|20)\d{2}\b""")
 
+/** The [SourceVariant.language] tags [CatalogRepository.movieVariants] treats as "understood" —
+ *  French, Italian, or an explicitly multi-language copy. Matches [VodTitleCleaner]'s own token
+ *  spellings for those (`FR`/`FRA`/`FRE`, `IT`/`ITA`, `MULTI`), uppercased before comparing. */
+private val PREFERRED_MOVIE_LANGUAGES = setOf("FR", "FRA", "FRE", "IT", "ITA", "MULTI")
+
 /**
  * Collapses obvious quality variants of the same film — "The Godfather 1972 HD" and
  * "The Godfather 4K" — into one entry with switchable tiers, the VOD analogue of a channel's
@@ -206,6 +214,10 @@ class CatalogRepository(
 
     fun observeChannelsIn(categoryIds: List<String>): Flow<List<Channel>> =
         channelDao.observeInCategories(categoryIds)
+
+    /** See [ChannelDao.observeVisibleCategoryIds]. */
+    fun observeVisibleCategoryIds(): Flow<Set<String>> =
+        channelDao.observeVisibleCategoryIds().map { it.toSet() }
 
     /**
      * Channels in a set of categories INCLUDING hidden ones, optionally scoped to one source — the
@@ -765,7 +777,18 @@ class CatalogRepository(
      *  and the Source/Quality panels in `VodPlayerScreen` are built from. Empty for a canonicalId
      *  that doesn't exist (never thrown), so a caller can always fall back to a single flat URL. */
     suspend fun movieVariants(canonicalId: Long): List<SourceVariant> =
-        withContext(Dispatchers.IO) { canonicalMovieDao.variantsFor(canonicalId) }
+        withContext(Dispatchers.IO) { preferredLanguageMovieVariants(canonicalMovieDao.variantsFor(canonicalId)) }
+
+    /** Movies: only ever offer a French, Italian or multi-language copy as a playable choice — a
+     *  standing preference, not per-title, and deliberate about excluding rather than falling back
+     *  to "show it anyway": a title that's only available in a language outside this list should
+     *  read as unavailable, not hand over a source in a language nobody asked for. A variant whose
+     *  [SourceVariant.language] wasn't recognised at all (most titles: providers rarely tag every
+     *  one, only the ones worth calling out) is kept rather than dropped, since an unlabelled copy
+     *  is just as likely to already be French as anything else — only an *explicitly* different
+     *  language tag (`EN`, `ES`, `AR`, …) is what this actually filters out. */
+    private fun preferredLanguageMovieVariants(all: List<SourceVariant>): List<SourceVariant> =
+        all.filter { it.language == null || it.language.uppercase() in PREFERRED_MOVIE_LANGUAGES }
 
     /** See [movieVariants] — the per-episode equivalent, since a series has no stream URL of its
      *  own to play (only its episodes do). */
@@ -800,7 +823,7 @@ class CatalogRepository(
             }
             MovieAvailability(
                 canonicalId = canonical?.id,
-                variants = canonical?.let { canonicalMovieDao.variantsFor(it.id) }.orEmpty(),
+                variants = canonical?.let { preferredLanguageMovieVariants(canonicalMovieDao.variantsFor(it.id)) }.orEmpty(),
             )
         }
 
@@ -843,6 +866,26 @@ class CatalogRepository(
 
     suspend fun tmdbSearch(query: String, isMovie: Boolean, page: Int = 1): List<TmdbListItem> =
         withContext(Dispatchers.IO) { runCatching { tmdb.search(query, isMovie, page) }.getOrDefault(emptyList()) }
+
+    /** One shelf per TMDB genre (Action, Comédie, Horreur…) — the Netflix-style genre rail. Genres
+     *  fetched once, then every genre's discover page is requested concurrently rather than one
+     *  request after another, so a dozen-genre row of shelves still lands in about one round trip's
+     *  worth of time. A genre with no results (rare, but possible for a niche TV genre) is dropped
+     *  rather than shown empty. */
+    suspend fun tmdbGenreRows(isMovie: Boolean, maxGenres: Int = 14, perGenre: Int = 20): List<GenreGroup<TmdbListItem>> =
+        withContext(Dispatchers.IO) {
+            val genres = runCatching { tmdb.genres(isMovie) }.getOrDefault(emptyList()).take(maxGenres)
+            coroutineScope {
+                genres.map { genre ->
+                    async {
+                        val items = runCatching { tmdb.discoverByGenre(isMovie, genre.id) }
+                            .getOrDefault(emptyList())
+                            .take(perGenre)
+                        GenreGroup(genre.name, items)
+                    }
+                }.awaitAll()
+            }.filter { it.items.isNotEmpty() }
+        }
 
     /** Full detail for one TMDB item, by id — the same lookup [movieDetail]/[seriesDetail] use for
      *  enrichment, exposed directly for a TMDB-catalog detail screen that may have no local movie

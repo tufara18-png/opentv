@@ -78,6 +78,12 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE favourite = 1 AND hidden = 0 ORDER BY sortIndex, displayName")
     fun observeFavourites(): Flow<List<Channel>>
 
+    /** Every category id that still has at least one visible channel — what the guide's rail
+     *  filters its groups against, so a group hidden whole (every channel in it switched off in
+     *  the manager) drops off the rail instead of lingering as a shelf that opens onto nothing. */
+    @Query("SELECT DISTINCT categoryId FROM channels WHERE hidden = 0")
+    fun observeVisibleCategoryIds(): Flow<List<String>>
+
     /**
      * Channels across a SET of provider categories. Needed because one logical category
      * ("General") is often shipped as several codec-split ones ("UK| GENERAL HD/RAW",

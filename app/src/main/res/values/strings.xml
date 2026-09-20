@@ -411,6 +411,8 @@
     <string name="channels_hidden">Hidden</string>
     <string name="channels_showing">Showing</string>
     <string name="channels_show">Show</string>
+    <string name="channels_manager_hide_group">Hide whole group</string>
+    <string name="channels_manager_show_group">Show whole group</string>
 
     <!-- ============================ Search ============================ -->
     <string name="search_type_name">Type a name</string>

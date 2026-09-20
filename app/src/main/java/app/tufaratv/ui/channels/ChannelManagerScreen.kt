@@ -207,10 +207,14 @@ fun ChannelManagerScreen(
                     BrowsePane(
                         hasCategories = categoryGroups.isNotEmpty(),
                         categorySelected = selectedCategory != null,
+                        groupLabel = categoryGroups.firstOrNull { it.key == selectedCategory }?.label,
                         rows = browseRows,
                         onExitLeft = onExitLeftToRail,
                         onToggleHidden = { row, hidden -> viewModel.setRowHidden(row, !hidden) },
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
+                        onToggleGroupHidden = { hidden ->
+                            selectedCategory?.let { viewModel.setGroupHidden(it, browseRows, hidden) }
+                        },
                     )
                 }
             }
@@ -259,33 +263,63 @@ private fun SearchPane(
 private fun BrowsePane(
     hasCategories: Boolean,
     categorySelected: Boolean,
+    groupLabel: String?,
     rows: List<ChannelsViewModel.Row>,
     onExitLeft: () -> Boolean,
     onToggleHidden: (ChannelsViewModel.Row, Boolean) -> Unit,
     onToggleFavourite: (ChannelsViewModel.Row) -> Unit,
+    onToggleGroupHidden: (Boolean) -> Unit,
 ) {
     when {
         !hasCategories -> Hint(stringResource(R.string.channels_manager_no_channels))
         !categorySelected -> Hint(stringResource(R.string.channels_manager_pick_category))
         rows.isEmpty() -> Hint(stringResource(R.string.channels_manager_empty_category))
-        else -> LazyColumn(
-            modifier = Modifier.fillMaxSize(),
-            verticalArrangement = Arrangement.spacedBy(6.dp),
-        ) {
-            items(rows, key = { it.key }) { row ->
-                val hidden = row.variants.all { it.hidden }
-                ManagerRow(
-                    row = row,
-                    hidden = hidden,
-                    onToggleHidden = { onToggleHidden(row, hidden) },
-                    onToggleFavourite = { onToggleFavourite(row) },
-                    // LEFT from the row's leftmost control (the star) hops back to the category
-                    // rail; from the switch it first steps left to the star, as usual.
-                    leftEdgeModifier = Modifier.onPreviewKeyEvent { e ->
-                        if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft) onExitLeft()
-                        else false
-                    },
-                )
+        else -> Column(Modifier.fillMaxSize()) {
+            // The whole-group toggle: every channel this category currently lists shares one
+            // hidden/shown state, computed live from the rows themselves rather than a separate
+            // per-group flag — so it always agrees with the per-channel switches below it, even
+            // right after a bulk hide/show or an individual one.
+            val groupHidden = rows.all { row -> row.variants.all { it.hidden } }
+            if (groupLabel != null) {
+                Row(
+                    Modifier.fillMaxWidth().padding(bottom = 10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        groupLabel,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.weight(1f),
+                    )
+                    OutlinedButton(onClick = { onToggleGroupHidden(!groupHidden) }) {
+                        Text(
+                            if (groupHidden) stringResource(R.string.channels_manager_show_group)
+                            else stringResource(R.string.channels_manager_hide_group),
+                        )
+                    }
+                }
+            }
+            LazyColumn(
+                modifier = Modifier.fillMaxSize(),
+                verticalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                items(rows, key = { it.key }) { row ->
+                    val hidden = row.variants.all { it.hidden }
+                    ManagerRow(
+                        row = row,
+                        hidden = hidden,
+                        onToggleHidden = { onToggleHidden(row, hidden) },
+                        onToggleFavourite = { onToggleFavourite(row) },
+                        // LEFT from the row's leftmost control (the star) hops back to the category
+                        // rail; from the switch it first steps left to the star, as usual.
+                        leftEdgeModifier = Modifier.onPreviewKeyEvent { e ->
+                            if (e.type == KeyEventType.KeyDown && e.key == Key.DirectionLeft) onExitLeft()
+                            else false
+                        },
+                    )
+                }
             }
         }
     }

@@ -202,6 +202,15 @@ fun HomeScreen(
         selectedRow = rows.firstOrNull { it.key == selectedRow?.key } ?: rows.firstOrNull()
     }
 
+    // No "All channels" entry in the rail any more — land on the first real category instead of
+    // the unsorted everything-at-once list. Only steps in when nothing else claimed the selection
+    // (Favourites, or a category the user already picked), so it never fights a deliberate choice.
+    LaunchedEffect(categories, favouritesOnly, selectedCategory) {
+        if (!favouritesOnly && selectedCategory == null && categories.isNotEmpty()) {
+            viewModel.selectCategory(categories.first().key)
+        }
+    }
+
     // ---- Live preview player -----------------------------------------------------------------
     // One muted player, reused. It only ever decodes while the guide is the foreground screen,
     // and is stopped before any hand-off to full-screen, so the box never runs two decoders at
@@ -353,15 +362,6 @@ fun HomeScreen(
                         modifier = if (favouritesOnly) Modifier.focusRequester(railFocusRequester) else Modifier,
                     )
                 }
-                item {
-                    val allSelected = !favouritesOnly && selectedCategory == null
-                    RailEntry(
-                        label = stringResource(R.string.guide_all_channels),
-                        selected = allSelected,
-                        onClick = { viewModel.selectCategory(null) },
-                        modifier = if (allSelected) Modifier.focusRequester(railFocusRequester) else Modifier,
-                    )
-                }
                 items(categories, key = { it.key }) { group ->
                     val groupSelected = !favouritesOnly && selectedCategory == group.key
                     RailEntry(
@@ -452,7 +452,12 @@ fun HomeScreen(
                     ChannelList(
                         rows = rows,
                         selectedKey = highlightedRow?.key,
-                        onSelectRow = { row -> channelMenu = row },
+                        // OK plays the channel straight away — the preview already follows the
+                        // highlight as you browse, so a click just promotes that into full-screen
+                        // instead of stopping on a dialog first. Long-press still reaches the
+                        // Watch/Record now/Schedule/Record series menu.
+                        onSelectRow = { row -> goFullscreen(row.primary) },
+                        onLongSelectRow = { row -> channelMenu = row },
                         onFocusRow = onFocusChannel,
                         onToggleFavourite = { viewModel.toggleFavourite(it) },
                         onExitLeftFromChannel = onExitLeftChannel,
@@ -464,9 +469,11 @@ fun HomeScreen(
                         windowStartMillis = windowStart,
                         dayOffset = guideDayOffset,
                         selectedKey = highlightedRow?.key,
-                        // OK on a channel opens its menu: Watch, Record now, Schedule a later show,
-                        // Record series. The preview already follows the highlight as you browse.
-                        onSelectRow = { row -> channelMenu = row },
+                        // OK plays the channel straight away; long-press opens its menu (Watch,
+                        // Record now, Schedule a later show, Record series). The preview already
+                        // follows the highlight as you browse.
+                        onSelectRow = { row -> goFullscreen(row.primary) },
+                        onLongSelectRow = { row -> channelMenu = row },
                         onFocusRow = onFocusChannel,
                         onProgramme = { row, programme -> recordTarget = row to programme },
                         onToggleFavourite = { viewModel.toggleFavourite(it) },

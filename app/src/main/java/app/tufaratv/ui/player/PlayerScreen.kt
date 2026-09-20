@@ -58,6 +58,7 @@ import androidx.compose.material.icons.filled.Subtitles
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -102,6 +103,7 @@ import app.tufaratv.core.SleepTimer
 import app.tufaratv.core.findActivity
 import app.tufaratv.core.requestIgnoreBatteryOptimizations
 import app.tufaratv.data.model.Channel
+import app.tufaratv.data.model.Programme
 import app.tufaratv.data.model.shownName
 import app.tufaratv.player.PlaybackQueue
 import app.tufaratv.player.PlayerController
@@ -114,6 +116,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
 import java.util.Locale
 
 /**
@@ -173,6 +176,32 @@ fun PlayerScreen(
     var currentId by remember { mutableStateOf<Long?>(null) }
     // The channel we were on before this one — powers the "Last channel" recall in the list.
     var previousId by remember { mutableStateOf<Long?>(null) }
+
+    // On-screen EPG for the channel currently playing — same now/next info as the guide's preview
+    // pane, so switching to full-screen never loses what you could already see there.
+    var nowProgramme by remember { mutableStateOf<Programme?>(null) }
+    var nextProgramme by remember { mutableStateOf<Programme?>(null) }
+    LaunchedEffect(currentId, variants) {
+        val channel = variants.firstOrNull { it.id == currentId }
+        while (true) {
+            if (channel == null) {
+                nowProgramme = null
+                nextProgramme = null
+            } else {
+                // Walk the same override→provider→matched guide-id candidates as the browsing
+                // guide (Channel.epgCandidates), so this lights up under the same conditions as
+                // the channel list's "now playing" line. `upcoming` already returns the
+                // currently-airing programme first (its end is still ahead of now), then the next.
+                val now = System.currentTimeMillis()
+                val pair = channel.epgCandidates.firstNotNullOfOrNull { id ->
+                    graph.epgRepository.upcoming(id, now, limit = 2).takeIf { it.isNotEmpty() }
+                }
+                nowProgramme = pair?.getOrNull(0)
+                nextProgramme = pair?.getOrNull(1)
+            }
+            delay(60_000)
+        }
+    }
     // Digits typed on the remote accumulate here, then jump to that channel number after a beat.
     var numberEntry by remember { mutableStateOf("") }
     var paused by remember { mutableStateOf(false) }
@@ -520,6 +549,37 @@ fun PlayerScreen(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    Spacer(Modifier.height(8.dp))
+                }
+
+                nowProgramme?.let { now ->
+                    Text(
+                        "${playerTimeFormat.format(java.util.Date(now.startUtcMillis))}–" +
+                            "${playerTimeFormat.format(java.util.Date(now.endUtcMillis))}   ${now.title}",
+                        style = MaterialTheme.typography.titleMedium,
+                        color = Color.White.copy(alpha = 0.9f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    LinearProgressIndicator(
+                        progress = { now.progressAt(System.currentTimeMillis()) },
+                        modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                    )
+                    nextProgramme?.let { next ->
+                        Spacer(Modifier.height(6.dp))
+                        Text(
+                            stringResource(
+                                R.string.guide_next_prefix,
+                                playerTimeFormat.format(java.util.Date(next.startUtcMillis)),
+                                next.title,
+                            ),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.7f),
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     Spacer(Modifier.height(12.dp))
                 }
 
@@ -907,6 +967,7 @@ private fun BarChip(
 
 private const val CONTROLS_TIMEOUT_MILLIS = 5_000L
 private const val NUMBER_ENTRY_TIMEOUT_MILLIS = 2_000L
+private val playerTimeFormat = SimpleDateFormat("HH:mm", Locale.getDefault())
 
 /** Maps a remote's number keys (top row and numeric keypad) to a digit, or null for other keys. */
 private fun keyToDigit(key: Key): Char? = when (key) {

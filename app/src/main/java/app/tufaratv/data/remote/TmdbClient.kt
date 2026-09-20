@@ -18,6 +18,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.util.Locale
 
 /**
  * The metadata TMDB can supply to fill gaps a provider left blank. Every field is nullable — TMDB
@@ -149,6 +150,7 @@ class TmdbClient(
             .addPathSegment(id)
             .addQueryParameter("api_key", key)
             .addQueryParameter("append_to_response", "credits")
+            .addQueryParameter("language", uiLanguage())
             .build()
         val o = get(url)?.jsonObject ?: return null
 
@@ -202,6 +204,7 @@ class TmdbClient(
             .addPathSegment("season")
             .addPathSegment(season.toString())
             .addQueryParameter("api_key", key)
+            .addQueryParameter("language", uiLanguage())
             .build()
         val episodes = get(url)?.jsonObject?.get("episodes")?.jsonArray ?: return emptyMap()
         return episodes.mapNotNull { element ->
@@ -243,6 +246,7 @@ class TmdbClient(
             .addQueryParameter("page", page.toString())
             .addQueryParameter("include_adult", "false")
             .addQueryParameter("sort_by", "popularity.desc")
+            .addQueryParameter("language", uiLanguage())
             .build()
         return parseListResults(get(url), isMovie)
     }
@@ -257,6 +261,7 @@ class TmdbClient(
             .addPathSegment(if (isMovie) "movie" else "tv")
             .addPathSegment("list")
             .addQueryParameter("api_key", key)
+            .addQueryParameter("language", uiLanguage())
             .build()
         val results = get(url)?.jsonObject?.get("genres")?.jsonArray ?: return emptyList()
         return results.mapNotNull { element ->
@@ -278,6 +283,7 @@ class TmdbClient(
             .addQueryParameter("query", query)
             .addQueryParameter("page", page.toString())
             .addQueryParameter("include_adult", "false")
+            .addQueryParameter("language", uiLanguage())
             .build()
         return parseListResults(get(url), isMovie)
     }
@@ -290,6 +296,7 @@ class TmdbClient(
         val url = builder
             .addQueryParameter("api_key", key)
             .addQueryParameter("page", page.toString())
+            .addQueryParameter("language", uiLanguage())
             .build()
         return parseListResults(get(url), isMovie)
     }
@@ -326,6 +333,10 @@ class TmdbClient(
             }
         }.onFailure { Log.w(TAG, "TMDB request failed", it) }.getOrNull()
     }
+
+    /** The device/app UI language as a TMDB `language` tag, so titles, overviews and genre names
+     *  come back already in the language the person picked — not always English. */
+    private fun uiLanguage(): String = Locale.getDefault().toLanguageTag()
 
     /** Strips a trailing "(2023)"/year and collapses whitespace so the title searches cleanly. */
     private fun searchTitle(raw: String): String =

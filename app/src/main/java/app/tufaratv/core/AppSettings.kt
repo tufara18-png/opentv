@@ -79,6 +79,18 @@ class AppSettings private constructor(context: Context) {
     val hiddenCategories: StateFlow<Set<String>> = _hiddenCategories.asStateFlow()
 
     /**
+     * [CategoryGroup] keys the user hid whole via the channel manager's "Hide whole group" — a
+     * plain declutter preference, unrelated to the adult lock above (no PIN, never revealed by
+     * [hiddenUnlocked]). Standing, not a one-time bulk hide of the channels that existed at the
+     * time: the guide's rail checks group membership here directly, so a channel a later sync
+     * adds to an already-hidden group's category stays hidden too, instead of quietly bringing
+     * the whole group back just because one new row wasn't part of the original bulk hide.
+     */
+    private val _manuallyHiddenGroups =
+        MutableStateFlow(prefs.getStringSet(KEY_HIDDEN_GROUPS, emptySet())!!.toSet())
+    val manuallyHiddenGroups: StateFlow<Set<String>> = _manuallyHiddenGroups.asStateFlow()
+
+    /**
      * Session unlock. Deliberately *not* persisted: revealing hidden categories lasts until the
      * app is next launched, so a child restarting the app is back behind the lock.
      */
@@ -104,6 +116,11 @@ class AppSettings private constructor(context: Context) {
     fun setHiddenCategories(keys: Set<String>) {
         prefs.edit().putStringSet(KEY_HIDDEN_CATS, keys).apply()
         _hiddenCategories.value = keys.toSet()
+    }
+
+    fun setManuallyHiddenGroups(keys: Set<String>) {
+        prefs.edit().putStringSet(KEY_HIDDEN_GROUPS, keys).apply()
+        _manuallyHiddenGroups.value = keys.toSet()
     }
 
     fun setHiddenUnlocked(unlocked: Boolean) {
@@ -478,6 +495,7 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_PREVIEW_SOUND = "guide_preview_sound"
         private const val KEY_PIN_HASH = "parental_pin_hash"
         private const val KEY_HIDDEN_CATS = "hidden_categories"
+        private const val KEY_HIDDEN_GROUPS = "manually_hidden_groups"
         private const val KEY_ACTIVE_PROFILE = "active_profile_id"
         private const val KEY_RESUME_LAST = "resume_last_channel"
         private const val KEY_CONTENT_LIVE = "content_live"
