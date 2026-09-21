@@ -238,4 +238,13 @@ class CanonicalMatcherTest {
     }
 
 
+    @Test
+    fun `structured provider year wins without polluting the title key with a bad embedded year`() {
+        val key = CanonicalMatcher.keyOf("The Wilds (2019) FHD", explicitYear = 2020)
+
+        assertThat(key.titleKey).isEqualTo("thewilds")
+        assertThat(key.year).isEqualTo(2020)
+    }
+
+
 }
