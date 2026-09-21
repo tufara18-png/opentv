@@ -438,6 +438,7 @@ fun TmdbSeriesDetailScreen(
 @Composable
 fun SeriesDetailScreen(
     seriesId: Long,
+    tmdbId: String? = null,
     onPlayEpisode: (mediaKey: String, url: String, title: String, contentKey: String?, variantsKey: String?) -> Unit,
     onOpenSeries: (Series) -> Unit,
     onOpenPerson: (String) -> Unit,
@@ -445,14 +446,22 @@ fun SeriesDetailScreen(
     viewModel: VodViewModel = viewModel(),
 ) {
     var series by remember(seriesId) { mutableStateOf<Series?>(null) }
+    var tmdbMeta by remember(seriesId, tmdbId) { mutableStateOf<TmdbMeta?>(null) }
     var moreLike by remember(seriesId) { mutableStateOf<List<Series>>(emptyList()) }
     val favFocus = remember { FocusRequester() }
 
-    LaunchedEffect(seriesId) {
+    LaunchedEffect(seriesId, tmdbId) {
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
         if (loaded != null) {
             viewModel.loadEpisodes(loaded)
+            // The visible identity is TMDB whenever this series came from the TMDB catalog.
+            // Provider metadata remains an availability/episode transport only.
+            val resolvedTmdbId = tmdbId?.takeIf { it.isNotBlank() }
+                ?: loaded.tmdbId?.takeIf { it.isNotBlank() }
+            if (resolvedTmdbId != null) {
+                tmdbMeta = viewModel.tmdbDetail(resolvedTmdbId, isMovie = false)
+            }
             moreLike = viewModel.moreLikeThisSeries(loaded)
         }
     }
@@ -478,9 +487,18 @@ fun SeriesDetailScreen(
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
+            val visibleTitle = tmdbMeta?.title?.takeIf { it.isNotBlank() } ?: s.displayTitle
+            val visibleBackdrop = tmdbMeta?.backdropUrl ?: s.backdropUrl
+            val visiblePoster = tmdbMeta?.posterUrl ?: s.posterUrl
+            val visibleMeta = tmdbMeta?.let { meta ->
+                listOfNotNull(
+                    meta.year?.toString(),
+                    meta.rating?.takeIf { it > 0.0 }?.let { "★ ${formatRating(it)}" },
+                ).joinToString("  ·  ")
+            } ?: seriesMeta(s)
             DetailBackdrop(
-                title = s.displayTitle, backdropUrl = s.backdropUrl, posterUrl = s.posterUrl,
-                meta = seriesMeta(s), onBack = onBack,
+                title = visibleTitle, backdropUrl = visibleBackdrop, posterUrl = visiblePoster,
+                meta = visibleMeta, onBack = onBack,
             ) {
                 DetailButton(
                     icon = if (s.favourite) Icons.Filled.Star else Icons.Outlined.StarOutline,
@@ -495,10 +513,10 @@ fun SeriesDetailScreen(
         }
         item(key = "info") {
             DetailInfo(
-                plot = s.plot,
-                cast = s.cast,
+                plot = tmdbMeta?.overview ?: s.plot,
+                cast = tmdbMeta?.cast ?: s.cast,
                 director = null,
-                genre = s.genre,
+                genre = tmdbMeta?.genre ?: s.genre,
                 onOpenPerson = onOpenPerson,
             )
         }
