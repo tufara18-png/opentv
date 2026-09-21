@@ -1188,45 +1188,45 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      *  lifetime, matching how [tmdbTrendingSeries] and the rest of this screen's rows behave. */
     val tmdbTrendingMovies: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbTrending(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbTrendingSeries: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbTrending(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbPopularMovies: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbPopular(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbPopularSeries: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbPopular(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbNewMovies: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbRecentlyReleased(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbNewSeries: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbRecentlyReleased(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbTopRatedMovies: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbTopRated(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbTopRatedSeries: StateFlow<List<TmdbListItem>> =
         flow { emit(graph.catalogRepository.tmdbTopRated(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     /** One shelf per TMDB genre — Action, Comédie, Horreur, etc. — the Netflix-style genre rail
      *  under the curated Trending/Popular/New/Top-rated rows. */
     val tmdbGenreRowsMovies: StateFlow<List<GenreGroup<TmdbListItem>>> =
         flow { emit(graph.catalogRepository.tmdbGenreRows(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbGenreRowsSeries: StateFlow<List<GenreGroup<TmdbListItem>>> =
         flow { emit(graph.catalogRepository.tmdbGenreRows(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     fun tmdbConfigured(): Boolean = graph.catalogRepository.tmdbConfigured()
 
