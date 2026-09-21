@@ -92,6 +92,12 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
         val testError: String? = null,
         val syncing: Boolean = false,
         val syncMessage: String? = null,
+        val preparingLibrary: Boolean = false,
+        val preparationStage: String? = null,
+        val preparationProgress: Float = 0f,
+        val preparationEtaSeconds: Long? = null,
+        val catalogueRefreshing: Boolean = false,
+        val catalogueProgress: Float = 0f,
     )
 
     private val _ui = MutableStateFlow(UiState())
@@ -172,6 +178,144 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
         }
     }
 
+    /**
+     * First-run path: build the whole local library once, then let every normal launch read Room.
+     * Progress is phase-based but ETA is derived from actual elapsed time, so it improves as the
+     * provider reveals how fast it is instead of showing a hard-coded fake duration.
+     */
+    fun saveAndPrepareLibrary(draft: Source, onDone: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            val startedAt = System.currentTimeMillis()
+
+            fun update(stage: String, progress: Float) {
+                val p = progress.coerceIn(0f, 1f)
+                val elapsed = (System.currentTimeMillis() - startedAt).coerceAtLeast(1L)
+                val eta = if (p >= 0.08f && p < 1f) {
+                    ((elapsed / p) * (1f - p) / 1000f).toLong().coerceAtLeast(1L)
+                } else null
+                _ui.value = _ui.value.copy(
+                    preparingLibrary = true,
+                    syncing = true,
+                    preparationStage = stage,
+                    preparationProgress = p,
+                    preparationEtaSeconds = eta,
+                    testError = null,
+                    syncMessage = null,
+                )
+            }
+
+            update("Connexion à votre service…", 0.05f)
+            val id = runCatching { graph.sourceRepository.save(draft) }.getOrElse {
+                _ui.value = _ui.value.copy(
+                    preparingLibrary = false,
+                    syncing = false,
+                    testError = it.message ?: "Impossible d'enregistrer ce service.",
+                )
+                onDone(false)
+                return@launch
+            }
+            val saved = graph.sourceRepository.byId(id)
+            if (saved == null) {
+                _ui.value = _ui.value.copy(
+                    preparingLibrary = false,
+                    syncing = false,
+                    testError = "Impossible d'ouvrir ce service.",
+                )
+                onDone(false)
+                return@launch
+            }
+
+            val now = System.currentTimeMillis()
+
+            update("Chargement des chaînes…", 0.12f)
+            when (val live = graph.catalogRepository.syncLive(saved, now)) {
+                is CatalogRepository.SyncResult.Failed -> {
+                    _ui.value = _ui.value.copy(
+                        preparingLibrary = false,
+                        syncing = false,
+                        testError = live.reason,
+                    )
+                    onDone(false)
+                    return@launch
+                }
+                is CatalogRepository.SyncResult.Success -> Unit
+            }
+
+            update("Organisation des films et séries…", 0.32f)
+            runCatching { graph.catalogRepository.syncVod(saved, now) }
+                .onFailure { Log.w("TufaraTV", "Initial VOD preparation failed", it) }
+            settings.vodSyncedAtMillis = now
+
+            update("Construction du guide TV…", 0.78f)
+            runCatching { graph.epgRepository.syncAll(now, force = true) }
+                .onFailure { Log.w("TufaraTV", "Initial guide preparation failed", it) }
+
+            update("Finalisation de votre accueil…", 0.94f)
+            runCatching { graph.recordingEngine.rescanSeriesRules() }
+
+            _ui.value = _ui.value.copy(
+                preparingLibrary = false,
+                syncing = false,
+                preparationStage = "Prêt",
+                preparationProgress = 1f,
+                preparationEtaSeconds = 0L,
+                syncMessage = null,
+            )
+            onDone(true)
+        }
+    }
+
+    /**
+     * Explicit catalogue maintenance. Normal app launches never call this.
+     */
+    fun refreshCatalogue(onDone: (Boolean) -> Unit = {}) {
+        if (_ui.value.catalogueRefreshing) return
+        viewModelScope.launch {
+            _ui.value = _ui.value.copy(
+                catalogueRefreshing = true,
+                catalogueProgress = 0.05f,
+                syncMessage = "Mise à jour des chaînes…",
+            )
+            val now = System.currentTimeMillis()
+            var failed = false
+            val sources = graph.sourceRepository.enabled()
+
+            for ((index, source) in sources.withIndex()) {
+                val base = index.toFloat() / sources.size.coerceAtLeast(1)
+                _ui.value = _ui.value.copy(catalogueProgress = 0.05f + base * 0.25f)
+                if (graph.catalogRepository.syncLive(source, now) is CatalogRepository.SyncResult.Failed) {
+                    failed = true
+                }
+            }
+
+            _ui.value = _ui.value.copy(
+                catalogueProgress = 0.35f,
+                syncMessage = "Mise à jour des films et séries…",
+            )
+            for ((index, source) in sources.withIndex()) {
+                runCatching { graph.catalogRepository.syncVod(source, now) }
+                    .onFailure { failed = true }
+                val part = (index + 1).toFloat() / sources.size.coerceAtLeast(1)
+                _ui.value = _ui.value.copy(catalogueProgress = 0.35f + part * 0.45f)
+            }
+            settings.vodSyncedAtMillis = now
+
+            _ui.value = _ui.value.copy(
+                catalogueProgress = 0.82f,
+                syncMessage = "Mise à jour du guide…",
+            )
+            runCatching { graph.epgRepository.syncAll(now, force = true) }
+                .onFailure { failed = true }
+
+            _ui.value = _ui.value.copy(
+                catalogueRefreshing = false,
+                catalogueProgress = 1f,
+                syncMessage = if (failed) "Catalogue mis à jour avec quelques erreurs." else "Catalogue à jour.",
+            )
+            onDone(!failed)
+        }
+    }
+
     fun delete(source: Source) {
         viewModelScope.launch { graph.catalogRepository.deleteSource(source.id) }
     }
@@ -193,7 +337,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             var channels = 0
             var problems = 0
             for (source in graph.sourceRepository.enabled()) {
-                when (val result = graph.catalogRepository.sync(source, now)) {
+                when (val result = graph.catalogRepository.syncLive(source, now)) {
                     is CatalogRepository.SyncResult.Success -> channels += result.channelCount
                     is CatalogRepository.SyncResult.Failed -> problems++
                 }
