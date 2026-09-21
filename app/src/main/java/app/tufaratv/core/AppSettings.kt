@@ -426,6 +426,15 @@ class AppSettings private constructor(context: Context) {
         set(value) { prefs.edit().putLong(KEY_VOD_SYNCED_AT, value).apply() }
 
     /**
+     * True once the first full local library build has completed. Existing installs without this
+     * key are treated as prepared; the flag is explicitly set false only when the new first-run
+     * flow starts, so upgrades never get thrown back into onboarding.
+     */
+    var libraryPrepared: Boolean
+        get() = prefs.getBoolean(KEY_LIBRARY_PREPARED, true)
+        set(value) { prefs.edit().putBoolean(KEY_LIBRARY_PREPARED, value).apply() }
+
+    /**
      * The TMDB API key (v3 auth) used to fill in artwork/metadata a provider left blank, and to
      * drive the TMDB-first Movies/Shows catalogue. Ships with a default key baked into the app —
      * explicitly requested, knowing this repo is public and the key is visible to anyone who
@@ -556,6 +565,7 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_SYNC_DEVICE_ID = "sync_device_id"
         private const val KEY_NAS_AUTO_SYNC = "nas_auto_sync"
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
+        private const val KEY_LIBRARY_PREPARED = "library_prepared"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
         // Baked-in default so the TMDB-first catalogue works with no setup step — see the doc
         // comment on _tmdbApiKey for why this is a deliberate, public key.
