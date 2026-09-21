@@ -619,6 +619,21 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     title = arg("title"),
                     userAgent = arg("ua").ifEmpty { "TufaraTV/0.1 (Android)" },
                     onBack = { navController.popBackStack() },
+                    onNextEpisode = { next ->
+                        navController.navigate(
+                            Routes.vodPlayer(
+                                key = next.mediaKey,
+                                url = next.streamUrl,
+                                title = next.title,
+                                ua = next.userAgent,
+                                contentKey = next.contentKey,
+                                variantsKey = next.variantsKey,
+                            ),
+                        ) {
+                            popUpTo(entry.destination.id) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
                     contentKey = arg("contentKey").ifEmpty { null },
                     // A movie's URL never sets variantsKey (only onPlayEpisode's route does), so an
                     // explicit null here must still fall back to contentKey itself — the parameter's
