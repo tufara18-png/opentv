@@ -1047,15 +1047,36 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val progress =
             if (pos.durationMillis > 0) (pos.positionMillis.toFloat() / pos.durationMillis).coerceIn(0f, 1f) else 0f
         return when (parts[0]) {
-            "movie" -> graph.catalogRepository.movie(id)?.let {
-                ResumeItem(pos.mediaKey, it.displayTitle, it.posterUrl, it.streamUrl, progress)
-            }
-            "ep" -> graph.catalogRepository.episode(id)?.let {
+            "movie" -> {
+                val movie = graph.catalogRepository.movie(id) ?: return null
+                val canonicalId = movie.canonicalId ?: return null
+                val canonical = graph.catalogRepository.canonicalMovie(canonicalId) ?: return null
+                val tmdbId = canonical.tmdbId?.takeIf { it.isNotBlank() } ?: return null
+                val tmdb = graph.catalogRepository.tmdbDetail(tmdbId, isMovie = true) ?: return null
                 ResumeItem(
                     pos.mediaKey,
-                    it.title.ifBlank { "S${it.season} E${it.episodeNumber}" },
-                    it.stillUrl,
-                    it.streamUrl,
+                    tmdb.title?.takeIf { it.isNotBlank() } ?: return null,
+                    tmdb.posterUrl,
+                    movie.streamUrl,
+                    progress,
+                )
+            }
+            "ep" -> {
+                val episode = graph.catalogRepository.episode(id) ?: return null
+                val providerSeries = graph.catalogRepository.seriesByProviderIdentity(
+                    episode.sourceId,
+                    episode.seriesId,
+                ) ?: return null
+                val canonicalSeriesId = providerSeries.canonicalId ?: return null
+                val canonical = graph.catalogRepository.canonicalSeries(canonicalSeriesId) ?: return null
+                val tmdbId = canonical.tmdbId?.takeIf { it.isNotBlank() } ?: return null
+                val tmdb = graph.catalogRepository.tmdbDetail(tmdbId, isMovie = false) ?: return null
+                val showTitle = tmdb.title?.takeIf { it.isNotBlank() } ?: return null
+                ResumeItem(
+                    pos.mediaKey,
+                    "$showTitle · S${episode.season} E${episode.episodeNumber}",
+                    tmdb.posterUrl ?: episode.stillUrl,
+                    episode.streamUrl,
                     progress,
                 )
             }
