@@ -171,8 +171,15 @@ object VodTitleCleaner {
         val year = match.groupValues[1].toIntOrNull()?.takeIf(::plausible) ?: return null
         val prefix = cleaned.substring(0, match.range.first).trim()
         val words = prefix.split(Regex("""\s+"""))
-            .count { token -> token.any(Char::isLetter) }
-        return year.takeIf { words >= 2 }
+            .filter { token -> token.any(Char::isLetter) }
+        if (words.isEmpty()) return null
+
+        // One-word films ("Oppenheimer 2023") are common. Reject only patterns where the year is
+        // much more likely to be part of the title itself than provider metadata.
+        val foldedPrefix = prefix.lowercase()
+        val articleOnly = foldedPrefix in setOf("the", "a", "an", "le", "la", "les", "el", "los", "las")
+        val titlePhraseYear = foldedPrefix.endsWith(" of")
+        return year.takeIf { !articleOnly && !titlePhraseYear }
     }
 
     fun parse(raw: String): ParsedVodTitle {
