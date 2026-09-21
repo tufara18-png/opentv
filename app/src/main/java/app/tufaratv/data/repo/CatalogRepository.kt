@@ -1318,9 +1318,11 @@ class CatalogRepository(
         val live =
             if (settings.liveEnabled.value) syncLive(source, nowUtcMillis)
             else SyncResult.Success(0, 0, 0)
-        if (live is SyncResult.Success && source.kind == SourceKind.XTREAM) {
-            runCatching { syncXtreamVod(source, nowUtcMillis) }
-                .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+        if (live is SyncResult.Success) {
+            // Keep refresh semantics identical across provider protocols. Xtream, Stalker/Ministra
+            // and M3U+ all get the same VOD refresh hook; protocol-specific behavior lives inside
+            // syncVod rather than leaking into the scheduler.
+            syncVod(source, nowUtcMillis)
         }
         live
     }
