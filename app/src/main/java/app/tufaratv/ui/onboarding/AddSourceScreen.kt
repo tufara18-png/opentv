@@ -79,6 +79,7 @@ fun AddSourceScreen(
     var usePhone by remember { mutableStateOf(isTelevision && editingSourceId == null) }
     var useFullSetup by remember { mutableStateOf(editingSourceId != null) }
     val ui by viewModel.ui.collectAsState()
+    var firstRunSimple by remember { mutableStateOf(editingSourceId == null && ui.sources.isEmpty()) }
 
     if (usePhone) {
         PhonePairingScreen(
@@ -101,7 +102,7 @@ fun AddSourceScreen(
     // overwhelmingly common credential format and can be expressed as the same three fields any
     // streaming service uses. M3U/Stalker, EPG URLs and User-Agent remain available behind
     // "Other connection methods" and when editing an existing provider.
-    if (existing == null && ui.sources.isEmpty() && !useFullSetup) {
+    if (existing == null && firstRunSimple && !useFullSetup) {
         SimpleStreamingSetup(
             viewModel = viewModel,
             isTelevision = isTelevision,
@@ -111,7 +112,7 @@ fun AddSourceScreen(
             etaSeconds = ui.preparationEtaSeconds,
             error = ui.testError ?: ui.syncMessage?.takeIf { !ui.syncing },
             onUsePhone = { usePhone = true },
-            onAdvanced = { useFullSetup = true },
+            onAdvanced = { firstRunSimple = false; useFullSetup = true },
             onFinished = onFinished,
         )
         return
