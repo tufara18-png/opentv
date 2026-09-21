@@ -247,4 +247,37 @@ class CanonicalMatcherTest {
     }
 
 
+    @Test
+    fun `new provider tmdb id promotes one unambiguous title-year canonical instead of duplicating it`() {
+        val existing = canonical(id = 9, tmdbId = null, title = "Oppenheimer", titleKey = "oppenheimer", year = 2023)
+        val decision = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate(
+                rawName = "[MULTI] Oppenheimer 2023 4K",
+                explicitYear = 2023,
+                tmdbId = "872585",
+            ),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(existing),
+        )
+
+        assertThat(decision.action).isEqualTo(CanonicalMatcher.Action.LINK_EXISTING)
+        assertThat(decision.existingId).isEqualTo(9)
+        assertThat(decision.matchKind).isEqualTo(CanonicalMatchKind.TMDB)
+    }
+
+    @Test
+    fun `provider tmdb id does not promote an ambiguous yearless remake match`() {
+        val dune1984 = canonical(id = 1, tmdbId = null, title = "Dune", titleKey = "dune", year = 1984)
+        val dune2021 = canonical(id = 2, tmdbId = null, title = "Dune", titleKey = "dune", year = 2021)
+        val decision = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate(rawName = "Dune", tmdbId = "438631"),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(dune1984, dune2021),
+        )
+
+        assertThat(decision.action).isEqualTo(CanonicalMatcher.Action.CREATE_NEW)
+        assertThat(decision.matchKind).isEqualTo(CanonicalMatchKind.TMDB)
+    }
+
+
 }
