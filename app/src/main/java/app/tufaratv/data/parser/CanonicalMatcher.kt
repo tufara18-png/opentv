@@ -53,7 +53,6 @@ object CanonicalMatcher {
         val key: Key,
     )
 
-    private val EMBEDDED_YEAR = Regex("""\b(19|20)\d{2}\b""")
 
     /**
      * Normalizes a candidate's raw name into a match key and clean display title. Reuses the same
@@ -63,11 +62,23 @@ object CanonicalMatcher {
      * that the group key deliberately throws away.
      */
     fun keyOf(rawName: String, explicitYear: Int? = null): Key {
-        val embeddedYear = EMBEDDED_YEAR.find(rawName)?.value?.toIntOrNull()
-        val bareName = EMBEDDED_YEAR.replace(rawName, " ")
-        val titleKey = ChannelNameNormalizer.normalize(bareName).groupKey
         val displayTitle = VodTitleCleaner.clean(rawName)
-        return Key(titleKey = titleKey, displayTitle = displayTitle, year = explicitYear ?: embeddedYear)
+        val inferredYear = VodTitleCleaner.inferReleaseYear(rawName)
+        val year = explicitYear ?: inferredYear
+
+        // Strip only the release year we actually inferred. Never remove every 19xx/20xx token:
+        // numbers such as "2001" and "2049" can be part of the work's real title.
+        val titleForKey = if (year != null) {
+            displayTitle
+                .replace(Regex("""\s*[\[(]\s*__YEAR__\s*[\])]\s*$""".replace("__YEAR__", year.toString())), "")
+                .replace(Regex("""\s+__YEAR__\s*$""".replace("__YEAR__", year.toString())), "")
+                .trim()
+                .ifBlank { displayTitle }
+        } else {
+            displayTitle
+        }
+        val titleKey = ChannelNameNormalizer.normalize(titleForKey).groupKey
+        return Key(titleKey = titleKey, displayTitle = displayTitle, year = year)
     }
 
     /**
