@@ -133,9 +133,6 @@ private fun dedupeSeriesByCanonical(series: List<Series>): List<Series> {
     return byKey.values.toList()
 }
 
-/** A standalone 4-digit release year (19xx/20xx) as it appears inside a VOD title. */
-private val VOD_YEAR = Regex("""\b(19|20)\d{2}\b""")
-
 /** The [SourceVariant.language] tags [CatalogRepository.movieVariants] treats as "understood" —
  *  French, Italian, or an explicitly multi-language copy. Matches [VodTitleCleaner]'s own token
  *  spellings for those (`FR`/`FRA`/`FRE`, `IT`/`ITA`, `MULTI`), uppercased before comparing. */
@@ -155,13 +152,11 @@ private val PREFERRED_MOVIE_LANGUAGES = setOf("FR", "FRA", "FRE", "IT", "ITA", "
 internal fun collapseMovieVariants(movies: List<Movie>): List<MovieVariantGroup> {
     val groups = LinkedHashMap<String, MutableList<MovieVariant>>()
     for (movie in movies) {
-        val embeddedYear = VOD_YEAR.find(movie.name)?.value?.toIntOrNull()
-        val bareName = VOD_YEAR.replace(movie.name, " ")
-        val normalized = ChannelNameNormalizer.normalize(bareName)
-        val year = movie.year ?: embeddedYear
-        val key = normalized.groupKey + "|" + (year?.toString() ?: "")
+        val identity = CanonicalMatcher.keyOf(movie.name, movie.year)
+        val parsed = VodTitleCleaner.parse(movie.name)
+        val key = identity.titleKey + "|" + (identity.year?.toString() ?: "")
         groups.getOrPut(key) { mutableListOf() }
-            .add(MovieVariant(movie, normalized.qualityLabel, normalized.qualityRank))
+            .add(MovieVariant(movie, parsed.qualityLabel, parsed.qualityRank))
     }
     return groups.values.map { variants ->
         val ordered = variants.sortedWith(
