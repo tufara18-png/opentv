@@ -99,11 +99,28 @@ object CanonicalMatcher {
         val key = keyOf(candidate.rawName, candidate.explicitYear)
 
         if (candidate.tmdbId != null) {
-            return if (existingByTmdbId != null) {
-                Decision(Action.LINK_EXISTING, existingByTmdbId.id, CanonicalMatchKind.TMDB, key)
-            } else {
-                Decision(Action.CREATE_NEW, matchKind = CanonicalMatchKind.TMDB, key = key)
+            if (existingByTmdbId != null) {
+                return Decision(Action.LINK_EXISTING, existingByTmdbId.id, CanonicalMatchKind.TMDB, key)
             }
+
+            // A provider can be the first one that finally supplies a real TMDB id for a title
+            // previously linked only by title/year. Promote that existing row instead of creating
+            // a duplicate, but only when the fallback is unambiguous and the old row has no
+            // conflicting TMDB identity of its own.
+            val promotable = existingByTitleKey.filter { existing ->
+                existing.tmdbId == null &&
+                    (key.year == null || existing.year == null || existing.year == key.year)
+            }
+            if (promotable.size == 1) {
+                return Decision(
+                    Action.LINK_EXISTING,
+                    promotable.single().id,
+                    CanonicalMatchKind.TMDB,
+                    key,
+                )
+            }
+
+            return Decision(Action.CREATE_NEW, matchKind = CanonicalMatchKind.TMDB, key = key)
         }
 
         if (key.year != null) {
