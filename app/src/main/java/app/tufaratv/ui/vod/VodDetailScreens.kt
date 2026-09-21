@@ -273,6 +273,8 @@ private fun AddonStreamRow(stream: StremioStream, onPick: (StremioStream) -> Uni
 @Composable
 fun TmdbMovieDetailScreen(
     tmdbId: String,
+    initialTitle: String = "",
+    initialYear: Int? = null,
     /** `VodPlayerScreen` re-fetches the full variant list itself from `contentKey`
      *  (`movieVariants(canonicalId)`, the same lookup this screen already did) — this only needs
      *  to get the player screen its first frame: one working URL/User-Agent to start from. */
@@ -285,10 +287,17 @@ fun TmdbMovieDetailScreen(
     var loaded by remember(tmdbId) { mutableStateOf(false) }
     val playFocus = remember { FocusRequester() }
 
+    // Availability lookup starts immediately from the TMDB list-card identity carried in the
+    // route. It is local Room work only; it never waits for the detail API request below.
+    LaunchedEffect(tmdbId, initialTitle, initialYear) {
+        availability = viewModel.movieAvailabilityForTmdb(tmdbId, initialTitle, initialYear)
+    }
     LaunchedEffect(tmdbId) {
         val result = viewModel.tmdbDetail(tmdbId, isMovie = true)
         meta = result
-        if (result != null) {
+        // If the caller did not carry a title/year (deep link / old route), refine availability
+        // once the full TMDB detail arrives. This still remains a local lookup.
+        if (result != null && initialTitle.isBlank()) {
             availability = viewModel.movieAvailabilityForTmdb(tmdbId, result.title ?: "", result.year)
         }
         loaded = true
@@ -360,6 +369,8 @@ fun TmdbMovieDetailScreen(
 @Composable
 fun TmdbSeriesDetailScreen(
     tmdbId: String,
+    initialTitle: String = "",
+    initialYear: Int? = null,
     onFoundLocal: (seriesId: Long) -> Unit,
     onBack: () -> Unit,
     viewModel: VodViewModel = viewModel(),
@@ -368,13 +379,16 @@ fun TmdbSeriesDetailScreen(
     var resolved by remember(tmdbId) { mutableStateOf(false) }
     var localSeriesId by remember(tmdbId) { mutableStateOf<Long?>(null) }
 
+    // Resolve IPTV availability immediately from the TMDB list-card identity. This is a local
+    // indexed DB lookup, independent from the network detail request.
+    LaunchedEffect(tmdbId, initialTitle, initialYear) {
+        localSeriesId = viewModel.localSeriesIdForTmdb(tmdbId, initialTitle, initialYear)
+    }
     LaunchedEffect(tmdbId) {
         val result = viewModel.tmdbDetail(tmdbId, isMovie = false)
         meta = result
-        localSeriesId = if (result != null) {
-            viewModel.localSeriesIdForTmdb(tmdbId, result.title ?: "", result.year)
-        } else {
-            null
+        if (result != null && initialTitle.isBlank()) {
+            localSeriesId = viewModel.localSeriesIdForTmdb(tmdbId, result.title ?: "", result.year)
         }
         resolved = true
     }
