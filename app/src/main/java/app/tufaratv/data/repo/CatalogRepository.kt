@@ -302,6 +302,12 @@ class CatalogRepository(
 
     suspend fun series(id: Long): app.tufaratv.data.model.Series? = seriesDao.byId(id)
 
+    /** Canonical/TMDB-facing identity helpers used by UI surfaces that must never expose
+     * provider-supplied VOD titles once a TMDB identity exists. */
+    suspend fun canonicalMovie(id: Long): CanonicalContent? = canonicalMovieDao.byId(id)
+    suspend fun canonicalSeries(id: Long): CanonicalContent? = canonicalSeriesDao.byId(id)
+    suspend fun canonicalEpisode(id: Long): CanonicalEpisode? = canonicalEpisodeDao.byId(id)
+
     // ---- Netflix-style home feeds ---------------------------------------------------------------
     // All local: derived from the catalogue already on disk plus the active profile's watch history.
     // The plain catalogue rows (recently added) are Flows so they fill in live as a VOD sync lands;
