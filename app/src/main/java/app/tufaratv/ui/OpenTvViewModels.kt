@@ -1310,6 +1310,24 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
+    /** Strict TMDB catalog search. Movies/series shown in the global search UI come from TMDB
+     *  even when no IPTV source carries them; IPTV is consulted only after opening a result. */
+    @OptIn(FlowPreview::class)
+    val tmdbMovieResults: StateFlow<List<TmdbListItem>> =
+        vodSearchInput.map { it.trim() }.debounce(200).distinctUntilChanged()
+            .mapLatest { q ->
+                if (q.length < 2) emptyList() else graph.catalogRepository.tmdbSearch(q, isMovie = true)
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    @OptIn(FlowPreview::class)
+    val tmdbSeriesResults: StateFlow<List<TmdbListItem>> =
+        vodSearchInput.map { it.trim() }.debounce(200).distinctUntilChanged()
+            .mapLatest { q ->
+                if (q.length < 2) emptyList() else graph.catalogRepository.tmdbSearch(q, isMovie = false)
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     fun toggleMovieFavourite(movie: Movie) {
         viewModelScope.launch {
             graph.catalogRepository.setMovieFavourite(movie.id, !movie.favourite)
