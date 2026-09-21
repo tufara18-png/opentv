@@ -307,6 +307,8 @@ class CatalogRepository(
     suspend fun canonicalMovie(id: Long): CanonicalContent? = canonicalMovieDao.byId(id)
     suspend fun canonicalSeries(id: Long): CanonicalContent? = canonicalSeriesDao.byId(id)
     suspend fun canonicalEpisode(id: Long): CanonicalEpisode? = canonicalEpisodeDao.byId(id)
+    suspend fun seriesByProviderIdentity(sourceId: Long, seriesId: String): Series? =
+        seriesDao.bySourceAndSeriesId(sourceId, seriesId)
 
     // ---- Netflix-style home feeds ---------------------------------------------------------------
     // All local: derived from the catalogue already on disk plus the active profile's watch history.
