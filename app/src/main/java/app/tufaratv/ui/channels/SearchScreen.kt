@@ -49,9 +49,8 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.viewmodel.compose.viewModel
 import app.tufaratv.R
 import app.tufaratv.data.model.Channel
-import app.tufaratv.data.model.Movie
-import app.tufaratv.data.model.Series
 import app.tufaratv.data.model.shownName
+import app.tufaratv.data.remote.TmdbListItem
 import app.tufaratv.data.parser.displayTitle
 import app.tufaratv.ui.ChannelsViewModel
 import app.tufaratv.ui.VodViewModel
@@ -70,16 +69,16 @@ import java.util.Locale
 @Composable
 fun SearchScreen(
     onPlayChannel: (Channel) -> Unit,
-    onPlayMovie: (Movie) -> Unit,
-    onOpenSeries: (Series) -> Unit,
+    onOpenTmdbMovie: (TmdbListItem) -> Unit,
+    onOpenTmdbSeries: (TmdbListItem) -> Unit,
     onBack: () -> Unit,
     viewModel: ChannelsViewModel = viewModel(),
     vodViewModel: VodViewModel = viewModel(),
 ) {
     var query by remember { mutableStateOf("") }
     val channelResults by viewModel.searchResults.collectAsState()
-    val movieResults by vodViewModel.movieResults.collectAsState()
-    val seriesResults by vodViewModel.seriesResults.collectAsState()
+    val movieResults by vodViewModel.tmdbMovieResults.collectAsState()
+    val seriesResults by vodViewModel.tmdbSeriesResults.collectAsState()
     val anyResults = channelResults.isNotEmpty() || movieResults.isNotEmpty() || seriesResults.isNotEmpty()
 
     LaunchedEffect(query) {
@@ -132,17 +131,17 @@ fun SearchScreen(
                         }
                         if (movieResults.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.nav_movies)) }
-                            items(movieResults, key = { "m${it.id}" }) { movie ->
-                                VodResultRow(movie.displayTitle, movie.posterUrl, movie.year?.toString()) {
-                                    onPlayMovie(movie)
+                            items(movieResults, key = { "m${it.tmdbId}" }) { movie ->
+                                VodResultRow(movie.title, movie.posterUrl, movie.year?.toString()) {
+                                    onOpenTmdbMovie(movie)
                                 }
                             }
                         }
                         if (seriesResults.isNotEmpty()) {
                             item { SectionHeader(stringResource(R.string.nav_shows)) }
-                            items(seriesResults, key = { "s${it.id}" }) { show ->
-                                VodResultRow(show.displayTitle, show.posterUrl, show.year?.toString()) {
-                                    onOpenSeries(show)
+                            items(seriesResults, key = { "s${it.tmdbId}" }) { show ->
+                                VodResultRow(show.title, show.posterUrl, show.year?.toString()) {
+                                    onOpenTmdbSeries(show)
                                 }
                             }
                         }
