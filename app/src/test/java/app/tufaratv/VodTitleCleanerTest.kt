@@ -58,6 +58,7 @@ class VodTitleCleanerTest {
     fun `a codec or HDR marker is captured as codec, not folded into quality`() {
         val p = VodTitleCleaner.parse("The Matrix 1999 FHD HEVC HDR")
 
+        assertThat(p.title).isEqualTo("The Matrix 1999")
         assertThat(p.qualityLabel).isEqualTo("FHD")
         assertThat(p.codec).contains("HEVC")
         assertThat(p.codec).contains("HDR")
@@ -128,6 +129,15 @@ class VodTitleCleanerTest {
         assertThat(VodTitleCleaner.inferReleaseYear("FR| Oppenheimer (2023) FHD")).isEqualTo(2023)
         assertThat(VodTitleCleaner.inferReleaseYear("[MULTI] Oppenheimer 2023 4K")).isEqualTo(2023)
         assertThat(VodTitleCleaner.inferReleaseYear("NF - Dark (2017) (DE)")).isEqualTo(2017)
+    }
+
+
+    @Test
+    fun `composite year language metadata keeps only the release year in the title`() {
+        assertThat(VodTitleCleaner.clean("The Get Out (2026 MULTI) 4K HEVC"))
+            .isEqualTo("The Get Out (2026)")
+        assertThat(VodTitleCleaner.clean("Oppenheimer (2023 VOSTFR) HDR"))
+            .isEqualTo("Oppenheimer (2023)")
     }
 
 
