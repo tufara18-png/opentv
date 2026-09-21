@@ -448,6 +448,22 @@ class AppSettings private constructor(context: Context) {
         val trimmed = key.trim()
         prefs.edit().putString(KEY_TMDB_KEY, trimmed).apply()
         _tmdbApiKey.value = trimmed
+        clearTmdbBrowseCache()
+    }
+
+    fun tmdbBrowseCache(key: String): String? =
+        prefs.getString(KEY_TMDB_BROWSE_PREFIX + key, null)
+
+    fun putTmdbBrowseCache(key: String, value: String) {
+        prefs.edit().putString(KEY_TMDB_BROWSE_PREFIX + key, value).apply()
+    }
+
+    fun clearTmdbBrowseCache() {
+        val editor = prefs.edit()
+        prefs.all.keys
+            .filter { it.startsWith(KEY_TMDB_BROWSE_PREFIX) }
+            .forEach(editor::remove)
+        editor.apply()
     }
 
     // ---- Stremio add-ons ---------------------------------------------------------------------
@@ -567,6 +583,7 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
         private const val KEY_LIBRARY_PREPARED = "library_prepared"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
+        private const val KEY_TMDB_BROWSE_PREFIX = "tmdb_browse_cache_"
         // Baked-in default so the TMDB-first catalogue works with no setup step — see the doc
         // comment on _tmdbApiKey for why this is a deliberate, public key.
         private const val DEFAULT_TMDB_KEY = "9cbb3977d74b67ad7bbd138c59a9820c"
