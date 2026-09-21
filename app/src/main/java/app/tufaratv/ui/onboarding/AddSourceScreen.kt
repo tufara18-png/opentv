@@ -77,6 +77,12 @@ fun AddSourceScreen(
     // Editing an existing provider always uses the direct form (the fields are pre-filled, and there
     // is nothing to pair); only a fresh add on a TV offers the phone-pairing QR first.
     var usePhone by remember { mutableStateOf(isTelevision && editingSourceId == null) }
+    var useFullSetup by remember { mutableStateOf(editingSourceId != null) }
+    val ui by viewModel.ui.collectAsState()
+    val settings = remember(context) { app.tufaratv.core.ServiceLocator.get(context).settings }
+    var firstRunSimple by remember {
+        mutableStateOf(editingSourceId == null && (ui.sources.isEmpty() || !settings.libraryPrepared))
+    }
 
     if (usePhone) {
         PhonePairingScreen(
@@ -89,12 +95,31 @@ fun AddSourceScreen(
         return
     }
 
-    val ui by viewModel.ui.collectAsState()
-
     // When editing, find the source being edited and pre-fill every field from it. Keyed on its id
     // so the fields seed once the list has loaded; a fresh add leaves everything blank.
     val existing = remember(editingSourceId, ui.sources) {
         editingSourceId?.let { id -> ui.sources.firstOrNull { it.id == id } }
+    }
+
+    // First launch is intentionally consumer-facing rather than provider-facing. Xtream is the
+    // overwhelmingly common credential format and can be expressed as the same three fields any
+    // streaming service uses. M3U/Stalker, EPG URLs and User-Agent remain available behind
+    // "Other connection methods" and when editing an existing provider.
+    if (existing == null && firstRunSimple && !useFullSetup) {
+        SimpleStreamingSetup(
+            viewModel = viewModel,
+            existing = ui.sources.firstOrNull().takeIf { !settings.libraryPrepared },
+            isTelevision = isTelevision,
+            syncing = ui.syncing,
+            progress = ui.preparationProgress,
+            stage = ui.preparationStage,
+            etaSeconds = ui.preparationEtaSeconds,
+            error = ui.testError ?: ui.syncMessage?.takeIf { !ui.syncing },
+            onUsePhone = { usePhone = true },
+            onAdvanced = { firstRunSimple = false; useFullSetup = true },
+            onFinished = onFinished,
+        )
+        return
     }
 
     var kind by remember(existing?.id) { mutableStateOf(existing?.kind ?: SourceKind.XTREAM) }
@@ -331,6 +356,163 @@ fun AddSourceScreen(
             Text(
                 stringResource(R.string.onboarding_privacy_note),
                 style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun SimpleStreamingSetup(
+    viewModel: SourcesViewModel,
+    existing: Source?,
+    isTelevision: Boolean,
+    syncing: Boolean,
+    progress: Float,
+    stage: String?,
+    etaSeconds: Long?,
+    error: String?,
+    onUsePhone: () -> Unit,
+    onAdvanced: () -> Unit,
+    onFinished: () -> Unit,
+) {
+    val context = LocalContext.current
+    var url by remember(existing?.id) { mutableStateOf(existing?.url.orEmpty()) }
+    var username by remember(existing?.id) { mutableStateOf(existing?.username.orEmpty()) }
+    var password by remember(existing?.id) { mutableStateOf(existing?.password.orEmpty()) }
+
+    val canContinue = url.isNotBlank() && username.isNotBlank() && password.isNotBlank() && !syncing
+
+    fun submit() {
+        val draft = (existing ?: Source(
+            name = context.getString(R.string.onboarding_default_provider_name),
+            kind = SourceKind.XTREAM,
+            url = "",
+        )).copy(
+            url = url.trim(),
+            username = username.trim(),
+            password = password,
+        )
+        viewModel.saveAndPrepareLibrary(draft) { ok -> if (ok) onFinished() }
+    }
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(horizontal = 32.dp, vertical = 48.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
+        Column(Modifier.widthIn(max = 520.dp)) {
+            Text("Tout votre contenu, au même endroit.", style = MaterialTheme.typography.displaySmall)
+            Spacer(Modifier.height(10.dp))
+            Text(
+                "Connectez votre service. On organise automatiquement les chaînes, le guide, les films et les séries.",
+                style = MaterialTheme.typography.bodyLarge,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+
+            Spacer(Modifier.height(30.dp))
+
+            OutlinedTextField(
+                value = url,
+                onValueChange = { url = it },
+                label = { Text("Adresse du service") },
+                placeholder = { Text("http://...") },
+                trailingIcon = { PasteButton { url = it.trim() } },
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+                singleLine = true,
+                enabled = !syncing,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = username,
+                onValueChange = { username = it },
+                label = { Text("Identifiant") },
+                trailingIcon = { PasteButton { username = it.trim() } },
+                singleLine = true,
+                enabled = !syncing,
+                modifier = Modifier.fillMaxWidth(),
+            )
+            Spacer(Modifier.height(12.dp))
+            OutlinedTextField(
+                value = password,
+                onValueChange = { password = it },
+                label = { Text("Mot de passe") },
+                trailingIcon = { PasteButton { password = it } },
+                visualTransformation = PasswordVisualTransformation(),
+                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Password),
+                singleLine = true,
+                enabled = !syncing,
+                modifier = Modifier.fillMaxWidth(),
+            )
+
+            Spacer(Modifier.height(22.dp))
+
+            Button(
+                onClick = ::submit,
+                enabled = canContinue,
+                modifier = Modifier.fillMaxWidth(),
+            ) {
+                if (syncing) {
+                    CircularProgressIndicator(Modifier.height(20.dp), strokeWidth = 2.dp)
+                    Spacer(Modifier.widthIn(min = 10.dp))
+                    Text("Préparation de votre espace…")
+                } else {
+                    Text("Continuer")
+                }
+            }
+
+            if (syncing) {
+                Spacer(Modifier.height(16.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
+                Text(
+                    stage ?: "Préparation de votre espace…",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                etaSeconds?.takeIf { it > 0 }?.let { seconds ->
+                    val minutes = (seconds + 59) / 60
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (minutes <= 1) "Moins d’une minute restante"
+                        else "Environ $minutes min restantes",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+
+            error?.takeIf { it.isNotBlank() && !syncing }?.let { message ->
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    message,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+            }
+
+            Spacer(Modifier.height(18.dp))
+            Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (isTelevision) {
+                    OutlinedButton(onClick = onUsePhone, enabled = !syncing) {
+                        Text("Configurer avec mon téléphone")
+                    }
+                }
+                OutlinedButton(onClick = onAdvanced, enabled = !syncing) {
+                    Text("Autres méthodes")
+                }
+            }
+
+            Spacer(Modifier.height(28.dp))
+            Text(
+                "Vos identifiants restent sur cet appareil.",
+                style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
         }

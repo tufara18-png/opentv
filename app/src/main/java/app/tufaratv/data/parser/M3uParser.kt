@@ -6,26 +6,31 @@
 package app.tufaratv.data.parser
 
 import app.tufaratv.data.model.Channel
+import app.tufaratv.data.model.Episode
+import app.tufaratv.data.model.Movie
+import app.tufaratv.data.model.Series
 import java.io.BufferedReader
 import java.io.InputStream
 
 /**
  * Streaming M3U/M3U8 playlist parser.
  *
- * Deliberately reads line-by-line rather than loading the whole playlist into memory:
- * real provider playlists routinely run to tens of megabytes and 50,000+ entries, and
- * loading that as a single String is a reliable way to OOM a cheap Android TV box.
- *
- * Tolerant by design. A malformed entry is skipped, not fatal — one bad line in a
- * 40,000-line playlist must never cost the user their entire channel list.
+ * A provider-facing "M3U" is often actually an Xtream m3u_plus export containing live TV,
+ * /movie/ VOD and /series/ episode URLs in the same file. Parse the file once, line-by-line, and
+ * split those strong URL shapes into the same domain models the native Xtream/Stalker paths use.
+ * Ambiguous entries stay LIVE. This is deliberately conservative: a group called "Cinema" is not
+ * enough to turn a linear cinema channel into a Movie.
  */
 object M3uParser {
 
     private val ATTRIBUTE_REGEX = Regex("""([\w-]+)="([^"]*)"""")
+    private val EPISODE_MARKER = Regex("""(?i)\bS(\d{1,3})\s*E(\d{1,4})\b""")
 
     data class Result(
         val channels: List<Channel>,
-        /** Value of `url-tvg`/`x-tvg-url` on the #EXTM3U header, if the playlist declares one. */
+        val movies: List<Movie>,
+        val series: List<Series>,
+        val episodes: List<Episode>,
         val declaredEpgUrl: String?,
         val skippedEntries: Int,
     )
@@ -38,64 +43,100 @@ object M3uParser {
 
     fun parse(reader: BufferedReader, sourceId: Long): Result {
         val channels = ArrayList<Channel>()
-        val seenStreamIds = HashSet<String>()
+        val movies = ArrayList<Movie>()
+        val episodes = ArrayList<Episode>()
+        val seriesById = LinkedHashMap<String, Series>()
+        val seenStreamUrls = HashSet<String>()
         var declaredEpgUrl: String? = null
         var skipped = 0
 
         var pendingName: String? = null
         var pendingAttributes: Map<String, String> = emptyMap()
         var pendingNumber: Int? = null
-        // #EXTVLCOPT / #EXTHTTP lines that apply to the next URL.
-        var index = 0
+        var liveIndex = 0
 
         reader.forEachLine { rawLine ->
             val line = rawLine.trim()
             when {
                 line.isEmpty() -> Unit
-
                 line.startsWith("#EXTM3U", ignoreCase = true) -> {
                     val attributes = parseAttributes(line)
                     declaredEpgUrl = attributes["url-tvg"]
                         ?: attributes["x-tvg-url"]
                         ?: declaredEpgUrl
                 }
-
                 line.startsWith("#EXTINF", ignoreCase = true) -> {
                     pendingAttributes = parseAttributes(line)
                     pendingName = displayNameOf(line, pendingAttributes)
                     pendingNumber = pendingAttributes["tvg-chno"]?.toIntOrNull()
                 }
-
-                // Any other directive: ignore, but keep the pending EXTINF alive.
                 line.startsWith("#") -> Unit
-
                 else -> {
                     val name = pendingName
                     if (name.isNullOrBlank()) {
-                        // A URL with no preceding #EXTINF. Nothing sensible to label it with.
                         skipped++
-                    } else {
+                    } else if (seenStreamUrls.add(line)) {
                         val attributes = pendingAttributes
-                        val streamId = attributes["tvg-id"]
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { "tvg:$it" }
-                            ?: "url:${stableHash(line)}"
+                        val group = attributes["group-title"]?.takeIf { it.isNotBlank() }
+                        val logo = (attributes["tvg-logo"] ?: attributes["logo"])?.takeIf { it.isNotBlank() }
+                        val urlLower = line.lowercase()
 
-                        // Providers repeat the same tvg-id across quality variants. Keep the
-                        // first and drop later duplicates rather than letting them collide on
-                        // the unique index and abort the whole import.
-                        if (seenStreamIds.add(streamId)) {
-                            channels += Channel(
-                                sourceId = sourceId,
-                                streamId = streamId,
-                                name = name,
-                                categoryId = attributes["group-title"]?.takeIf { it.isNotBlank() },
-                                logoUrl = (attributes["tvg-logo"] ?: attributes["logo"])
-                                    ?.takeIf { it.isNotBlank() },
-                                epgChannelId = attributes["tvg-id"]?.takeIf { it.isNotBlank() },
-                                number = pendingNumber,
-                                streamUrl = line,
-                                sortIndex = index++,
+                        when {
+                            "/series/" in urlLower -> {
+                                val descriptor = episodeDescriptor(name)
+                                if (descriptor == null) {
+                                    channels += channelOf(
+                                        sourceId, name, line, attributes, group, logo, pendingNumber, liveIndex++,
+                                    )
+                                } else {
+                                    val seriesId = "m3u-series:${stableHash(descriptor.seriesTitle.lowercase())}"
+                                    seriesById.putIfAbsent(
+                                        seriesId,
+                                        Series(
+                                            sourceId = sourceId,
+                                            seriesId = seriesId,
+                                            name = descriptor.seriesTitle,
+                                            categoryId = group,
+                                            posterUrl = logo,
+                                            rating = null,
+                                            year = VodTitleCleaner.inferReleaseYear(descriptor.seriesTitle),
+                                            plot = null,
+                                        ),
+                                    )
+                                    episodes += Episode(
+                                        sourceId = sourceId,
+                                        seriesId = seriesId,
+                                        episodeId = "url:${stableHash(line)}",
+                                        season = descriptor.season,
+                                        episodeNumber = descriptor.episode,
+                                        title = descriptor.episodeTitle,
+                                        plot = null,
+                                        durationSeconds = null,
+                                        stillUrl = logo,
+                                        streamUrl = line,
+                                    )
+                                }
+                            }
+                            "/movie/" in urlLower -> {
+                                val extension = line.substringBefore('?')
+                                    .substringAfterLast('.', missingDelimiterValue = "")
+                                    .takeIf { it.length in 2..5 }
+                                movies += Movie(
+                                    sourceId = sourceId,
+                                    streamId = "url:${stableHash(line)}",
+                                    name = name,
+                                    categoryId = group,
+                                    posterUrl = logo,
+                                    rating = null,
+                                    year = VodTitleCleaner.inferReleaseYear(name),
+                                    plot = null,
+                                    durationSeconds = null,
+                                    containerExtension = extension,
+                                    streamUrl = line,
+                                )
+                            }
+                            else -> channels += channelOf(
+                                sourceId, name, line, attributes, group, logo, pendingNumber, liveIndex++,
                             )
                         }
                     }
@@ -106,14 +147,65 @@ object M3uParser {
             }
         }
 
-        return Result(channels, declaredEpgUrl, skipped)
+        return Result(
+            channels = channels,
+            movies = movies,
+            series = seriesById.values.toList(),
+            episodes = episodes,
+            declaredEpgUrl = declaredEpgUrl,
+            skippedEntries = skipped,
+        )
     }
 
-    /**
-     * The display name is whatever follows the last comma on the #EXTINF line. Falling back
-     * to `tvg-name` matters because a fair number of playlists emit `#EXTINF:-1 ...,` with
-     * nothing after the comma.
-     */
+    private fun channelOf(
+        sourceId: Long,
+        name: String,
+        url: String,
+        attributes: Map<String, String>,
+        group: String?,
+        logo: String?,
+        number: Int?,
+        sortIndex: Int,
+    ): Channel {
+        val tvgId = attributes["tvg-id"]?.takeIf { it.isNotBlank() }
+        val streamId = tvgId?.let { "tvg:$it:url:${stableHash(url)}" } ?: "url:${stableHash(url)}"
+        return Channel(
+            sourceId = sourceId,
+            streamId = streamId,
+            name = name,
+            categoryId = group,
+            logoUrl = logo,
+            epgChannelId = tvgId,
+            number = number,
+            streamUrl = url,
+            sortIndex = sortIndex,
+        )
+    }
+
+    private data class EpisodeDescriptor(
+        val seriesTitle: String,
+        val season: Int,
+        val episode: Int,
+        val episodeTitle: String,
+    )
+
+    private fun episodeDescriptor(raw: String): EpisodeDescriptor? {
+        val marker = EPISODE_MARKER.find(raw) ?: return null
+        val season = marker.groupValues[1].toIntOrNull() ?: return null
+        val episode = marker.groupValues[2].toIntOrNull() ?: return null
+        val before = raw.substring(0, marker.range.first)
+            .trim(' ', '-', '|', ':', '.', '_')
+            .takeIf { it.isNotBlank() } ?: return null
+        val after = raw.substring(marker.range.last + 1)
+            .trim(' ', '-', '|', ':', '.', '_')
+        return EpisodeDescriptor(
+            seriesTitle = VodTitleCleaner.clean(before),
+            season = season,
+            episode = episode,
+            episodeTitle = after.takeIf { it.isNotBlank() } ?: "Episode $episode",
+        )
+    }
+
     private fun displayNameOf(line: String, attributes: Map<String, String>): String? {
         val afterComma = line.substringAfterLast(',', missingDelimiterValue = "").trim()
         return afterComma.takeIf { it.isNotBlank() }
@@ -125,12 +217,11 @@ object M3uParser {
             match.groupValues[1].lowercase() to match.groupValues[2]
         }
 
-    /** FNV-1a. Stable across processes and platforms, unlike [String.hashCode] guarantees. */
     private fun stableHash(value: String): String {
-        var hash = 0xcbf29ce484222325uL.toLong() // FNV-1a 64-bit offset basis
+        var hash = 0xcbf29ce484222325uL.toLong()
         for (byte in value.encodeToByteArray()) {
             hash = hash xor (byte.toLong() and 0xff)
-            hash *= 0x100000001b3L // FNV-1a 64-bit prime
+            hash *= 0x100000001b3L
         }
         return java.lang.Long.toHexString(hash)
     }

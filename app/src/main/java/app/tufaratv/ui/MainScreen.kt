@@ -6,7 +6,14 @@
 package app.tufaratv.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.tween
 import app.tufaratv.R
 import app.tufaratv.core.findActivity
 import app.tufaratv.core.StatusBus
@@ -14,6 +21,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -25,9 +33,13 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.FiberManualRecord
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
@@ -59,6 +71,7 @@ import app.tufaratv.core.AppSettings
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -69,8 +82,13 @@ import app.tufaratv.data.model.Recording
 import app.tufaratv.data.model.Series
 import app.tufaratv.ui.channels.HomeScreen
 import app.tufaratv.ui.recordings.RecordingsScreen
+import app.tufaratv.ui.vod.ContinueWatchingRow
 import app.tufaratv.ui.vod.MoviesScreen
+import app.tufaratv.ui.vod.SectionHeader
+import app.tufaratv.ui.vod.TmdbPosterRow
 import app.tufaratv.ui.vod.SeriesScreen
+import androidx.lifecycle.viewmodel.compose.viewModel
+import coil.compose.AsyncImage
 
 /**
  * The shell: a slim navigation rail down the left over a content area. The rail sits collapsed as
@@ -79,6 +97,7 @@ import app.tufaratv.ui.vod.SeriesScreen
  * rather than pushing it, so expanding the menu never reflows the guide underneath.
  */
 enum class Tab(val labelRes: Int, val icon: ImageVector) {
+    HOME(R.string.nav_home, Icons.Filled.Home),
     LIVE(R.string.nav_live_tv, Icons.Filled.LiveTv),
     MOVIES(R.string.nav_movies, Icons.Filled.Movie),
     SHOWS(R.string.nav_shows, Icons.Filled.Tv),
@@ -118,6 +137,7 @@ fun MainScreen(
     val seriesEnabled by settings.seriesEnabled.collectAsState()
     val visibleTabs = remember(liveEnabled, moviesEnabled, seriesEnabled) {
         buildList {
+            add(Tab.HOME)
             if (liveEnabled) add(Tab.LIVE)
             if (moviesEnabled) add(Tab.MOVIES)
             if (seriesEnabled) add(Tab.SHOWS)
@@ -180,37 +200,182 @@ fun MainScreen(
         )
 
         Box(Modifier.weight(1f).fillMaxHeight()) {
-            when (tab) {
-                Tab.LIVE -> HomeScreen(
-                    isTelevision = isTelevision,
-                    hasSources = hasSources,
-                    isSyncing = isSyncing,
-                    onPlayChannel = onPlayChannel,
-                    onAddSource = onAddSource,
-                    onRefresh = onRefresh,
-                    onPlayCatchup = onPlayCatchup,
-                )
-                Tab.MOVIES -> MoviesScreen(
-                    onOpenMovie = onOpenMovie,
-                    onOpenTmdb = onOpenTmdbMovie,
-                    onResume = onResume,
-                    onOpenSearch = onOpenSearch,
-                    hasSources = hasSources,
-                    isSyncing = isSyncing,
-                )
-                Tab.SHOWS -> SeriesScreen(
-                    onOpenSeries = onOpenSeries,
-                    onOpenTmdb = onOpenTmdbSeries,
-                    onResume = onResume,
-                    onOpenSearch = onOpenSearch,
-                    hasSources = hasSources,
-                    isSyncing = isSyncing,
-                )
-                Tab.RECORDINGS -> RecordingsScreen(onPlay = onPlayRecording)
+            AnimatedContent(
+                targetState = tab,
+                transitionSpec = {
+                    (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 24 }) togetherWith
+                        (fadeOut(tween(120)) + slideOutHorizontally(tween(160)) { -it / 32 })
+                },
+                label = "mainTabTransition",
+            ) { selected ->
+                when (selected) {
+                    Tab.HOME -> StreamingHomeScreen(
+                        onPlayChannel = onPlayChannel,
+                        onOpenTmdbMovie = onOpenTmdbMovie,
+                        onOpenTmdbSeries = onOpenTmdbSeries,
+                        onResume = onResume,
+                    )
+                    Tab.LIVE -> HomeScreen(
+                        isTelevision = isTelevision,
+                        hasSources = hasSources,
+                        isSyncing = isSyncing,
+                        onPlayChannel = onPlayChannel,
+                        onAddSource = onAddSource,
+                        onRefresh = onRefresh,
+                        onPlayCatchup = onPlayCatchup,
+                    )
+                    Tab.MOVIES -> MoviesScreen(
+                        onOpenMovie = onOpenMovie,
+                        onOpenTmdb = onOpenTmdbMovie,
+                        onResume = onResume,
+                        onOpenSearch = onOpenSearch,
+                        hasSources = hasSources,
+                        isSyncing = isSyncing,
+                    )
+                    Tab.SHOWS -> SeriesScreen(
+                        onOpenSeries = onOpenSeries,
+                        onOpenTmdb = onOpenTmdbSeries,
+                        onResume = onResume,
+                        onOpenSearch = onOpenSearch,
+                        hasSources = hasSources,
+                        isSyncing = isSyncing,
+                    )
+                    Tab.RECORDINGS -> RecordingsScreen(onPlay = onPlayRecording)
+                }
             }
         }
       }
       StatusBar()
+    }
+}
+
+@Composable
+private fun StreamingHomeScreen(
+    onPlayChannel: (Channel) -> Unit,
+    onOpenTmdbMovie: (TmdbListItem) -> Unit,
+    onOpenTmdbSeries: (TmdbListItem) -> Unit,
+    onResume: (mediaKey: String, url: String, title: String) -> Unit,
+    vodViewModel: VodViewModel = viewModel(),
+    homeViewModel: StreamingHomeViewModel = viewModel(),
+) {
+    val resume by vodViewModel.continueWatching.collectAsState()
+    val recentLive by homeViewModel.recentLive.collectAsState()
+    val movies by vodViewModel.tmdbTrendingMovies.collectAsState()
+    val series by vodViewModel.tmdbTrendingSeries.collectAsState()
+
+    // Home is now the product entry point, so VOD warm-up starts here rather than waiting for the
+    // user to discover the Movies or Shows tabs. The repository TTL keeps this cheap on warm starts.
+    LaunchedEffect(Unit) { vodViewModel.ensureVodLoaded() }
+
+    LazyColumn(
+        modifier = Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(top = 22.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(18.dp),
+    ) {
+        if (resume.isNotEmpty()) {
+            item(key = "continue") { ContinueWatchingRow(resume, onResume) }
+        }
+        if (recentLive.isNotEmpty()) {
+            item(key = "recent_live") {
+                Column(Modifier.fillMaxWidth()) {
+                    SectionHeader(stringResource(R.string.home_recent_live))
+                    LazyRow(
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                        horizontalArrangement = Arrangement.spacedBy(12.dp),
+                    ) {
+                        items(recentLive, key = { it.channel.id }) { item ->
+                            RecentLiveCard(item = item, onClick = { onPlayChannel(item.channel) })
+                        }
+                    }
+                }
+            }
+        }
+        if (movies.isNotEmpty()) {
+            item(key = "trending_movies") {
+                TmdbPosterRow(stringResource(R.string.home_trending_movies), movies, onOpenTmdbMovie)
+            }
+        }
+        if (series.isNotEmpty()) {
+            item(key = "trending_series") {
+                TmdbPosterRow(stringResource(R.string.home_trending_series), series, onOpenTmdbSeries)
+            }
+        }
+    }
+}
+
+@Composable
+private fun RecentLiveCard(
+    item: StreamingHomeViewModel.RecentLiveItem,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val border = if (focused) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    Column(
+        Modifier
+            .width(250.dp)
+            .clip(RoundedCornerShape(12.dp))
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(12.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Box(
+                Modifier
+                    .size(56.dp)
+                    .clip(RoundedCornerShape(10.dp))
+                    .background(MaterialTheme.colorScheme.surface)
+            ) {
+                AsyncImage(
+                    model = item.channel.logoUrl,
+                    contentDescription = item.channel.displayName,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize().padding(6.dp),
+                )
+            }
+            Spacer(Modifier.width(10.dp))
+            Column(Modifier.weight(1f)) {
+                Text(
+                    item.channel.displayName,
+                    style = MaterialTheme.typography.titleSmall,
+                    fontWeight = FontWeight.SemiBold,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    item.now?.title ?: stringResource(R.string.nav_live_tv),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        item.now?.let { now ->
+            Spacer(Modifier.height(10.dp))
+            val progress = now.progressAt(System.currentTimeMillis())
+            LinearProgressIndicator(
+                progress = { progress },
+                modifier = Modifier.fillMaxWidth().height(3.dp),
+            )
+        }
+        item.next?.takeIf { it.id != item.now?.id }?.let { next ->
+            Spacer(Modifier.height(8.dp))
+            Text(
+                "Ensuite · " + next.title,
+                style = MaterialTheme.typography.labelSmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+        }
+        Spacer(Modifier.height(1.dp))
+        Box(
+            Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(border.copy(alpha = if (focused) 0.9f else 0f))
+        )
     }
 }
 

@@ -62,6 +62,42 @@ class StalkerApi(
     /** One live token per source, so zapping doesn't re-handshake on every channel. */
     private val sessions = ConcurrentHashMap<Long, Session>()
 
+
+    /**
+     * Stalker/Ministra is a protocol family, not a stable JSON schema. Depending on middleware
+     * version/proxy, payloads arrive as:
+     *   {"js": ...}, {"data": ...}, {"result": ...}, {"response": ...}, or already-unwrapped.
+     * Normalize those transport envelopes before any feature-specific parser sees them.
+     */
+    private fun unwrapPayload(element: JsonElement?): JsonElement? {
+        var current = element ?: return null
+        repeat(4) {
+            val obj = current as? JsonObject ?: return current
+            val next = listOf("js", "result", "response")
+                .firstNotNullOfOrNull { key -> obj[key]?.takeUnless { it is JsonPrimitive && it.contentOrNull == "null" } }
+                ?: return current
+            current = next
+        }
+        return current
+    }
+
+    /** Accept the common list shapes without baking one portal's wrapper into the mapper. */
+    private fun listPayload(element: JsonElement?): JsonArray {
+        val unwrapped = unwrapPayload(element)
+        return when (unwrapped) {
+            is JsonArray -> unwrapped
+            is JsonObject -> {
+                listOf("data", "items", "channels", "genres", "categories", "results")
+                    .firstNotNullOfOrNull { key -> unwrapPayload(unwrapped[key]) as? JsonArray }
+                    ?: JsonArray(emptyList())
+            }
+            else -> JsonArray(emptyList())
+        }
+    }
+
+    private fun JsonObject.firstString(vararg keys: String): String? =
+        keys.firstNotNullOfOrNull { key -> str(key) }
+
     /** Add-source test: proves the portal + MAC produce a token. Throws [StalkerException] if not. */
     suspend fun handshakeTest(source: Source) = withContext(Dispatchers.IO) {
         session(source, force = true)
@@ -70,14 +106,14 @@ class StalkerApi(
 
     /** Live categories ("genres") for the guide's rail. */
     suspend fun liveCategories(source: Source): List<Category> = withContext(Dispatchers.IO) {
-        val arr = callRetrying(source, type = "itv", action = "get_genres") as? JsonArray ?: return@withContext emptyList()
+        val arr = listPayload(callRetrying(source, type = "itv", action = "get_genres"))
         arr.mapIndexedNotNull { index, element ->
             val o = element as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o.str("id") ?: return@mapIndexedNotNull null
+            val id = o.firstString("id", "genre_id", "category_id") ?: return@mapIndexedNotNull null
             Category(
                 id = id,
                 sourceId = source.id,
-                name = o.str("title") ?: id,
+                name = o.firstString("title", "name", "genre_name", "category_name") ?: id,
                 kind = StreamKind.LIVE,
                 sortIndex = index,
             )
@@ -87,30 +123,24 @@ class StalkerApi(
     /** Every live channel. Each carries its `cmd`; the real URL is minted by [createLink] at play time. */
     suspend fun liveChannels(source: Source): List<Channel> = withContext(Dispatchers.IO) {
         val s = session(source)
-        val js = callRetrying(source, type = "itv", action = "get_all_channels")
-        // get_all_channels returns { js: { data: [ ... ] } }; some portals return the array directly.
-        val data = when (js) {
-            is JsonArray -> js
-            is JsonObject -> js["data"] as? JsonArray ?: JsonArray(emptyList())
-            else -> JsonArray(emptyList())
-        }
+        val data = listPayload(callRetrying(source, type = "itv", action = "get_all_channels"))
         data.mapIndexedNotNull { index, element ->
             val o = element as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o.str("id") ?: return@mapIndexedNotNull null
-            val name = o.str("name") ?: return@mapIndexedNotNull null
-            val number = o.str("number")?.toIntOrNull()
+            val id = o.firstString("id", "channel_id", "stream_id") ?: return@mapIndexedNotNull null
+            val name = o.firstString("name", "title", "channel_name") ?: return@mapIndexedNotNull null
+            val number = o.firstString("number", "num", "channel_number")?.toIntOrNull()
             Channel(
                 sourceId = source.id,
                 streamId = id,
                 name = name,
-                categoryId = o.str("tv_genre_id"),
-                logoUrl = o.str("logo")?.takeIf { it.isNotBlank() }?.let { absoluteLogo(s.endpoint, it) },
-                epgChannelId = o.str("xmltv_id")?.takeIf { it.isNotBlank() },
+                categoryId = o.firstString("tv_genre_id", "genre_id", "category_id"),
+                logoUrl = o.firstString("logo", "logo_uri", "screenshot_uri")?.takeIf { it.isNotBlank() }?.let { absoluteLogo(s.endpoint, it) },
+                epgChannelId = o.firstString("xmltv_id", "epg_id", "tvg_id")?.takeIf { it.isNotBlank() },
                 number = number,
                 // Never played directly — a marker so nothing mistakes it for a real URL; [cmd] is
                 // what gets resolved. Distinct per channel so de-dup/quality-grouping still works.
                 streamUrl = "stalker://${source.id}/$id",
-                cmd = o.str("cmd"),
+                cmd = o.firstString("cmd", "command", "stream_cmd"),
                 sortIndex = number ?: index,
             )
         }
@@ -130,18 +160,22 @@ class StalkerApi(
                 b.addQueryParameter("disable_ad", "0")
                 if (seriesEpisode != null) b.addQueryParameter("series", seriesEpisode.toString())
             }
-            val linkCmd = (js as? JsonObject)?.str("cmd") ?: return@withContext null
+            val unwrapped = unwrapPayload(js)
+            val linkCmd = when (unwrapped) {
+                is JsonObject -> unwrapped.firstString("cmd", "url", "link", "stream_url")
+                is JsonPrimitive -> unwrapped.contentOrNull
+                else -> null
+            } ?: return@withContext null
             stripCmdPrefix(linkCmd)
         }
 
     /** VOD (movie) categories — same shape as [liveCategories], under the `vod` type. */
     suspend fun vodCategories(source: Source): List<Category> = withContext(Dispatchers.IO) {
-        val arr = callRetrying(source, type = "vod", action = "get_categories") as? JsonArray
-            ?: return@withContext emptyList()
+        val arr = listPayload(callRetrying(source, type = "vod", action = "get_categories"))
         arr.mapIndexedNotNull { index, element ->
             val o = element as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o.str("id") ?: return@mapIndexedNotNull null
-            Category(id = id, sourceId = source.id, name = o.str("title") ?: id, kind = StreamKind.MOVIE, sortIndex = index)
+            val id = o.firstString("id", "category_id", "genre_id") ?: return@mapIndexedNotNull null
+            Category(id = id, sourceId = source.id, name = o.firstString("title", "name", "category_name") ?: id, kind = StreamKind.MOVIE, sortIndex = index)
         }
     }
 
@@ -165,9 +199,9 @@ class StalkerApi(
         fetchAllPagesStreaming(source, type = "vod") { batch ->
             val movies = batch.mapNotNull { element ->
                 val o = element as? JsonObject ?: return@mapNotNull null
-                val id = o.str("id") ?: return@mapNotNull null
-                val name = o.str("name") ?: return@mapNotNull null
-                val cmd = o.str("cmd") ?: return@mapNotNull null
+                val id = o.firstString("id", "movie_id", "series_id", "stream_id") ?: return@mapNotNull null
+                val name = o.firstString("name", "title") ?: return@mapNotNull null
+                val cmd = o.firstString("cmd", "command", "stream_cmd") ?: return@mapNotNull null
                 Movie(
                     sourceId = source.id,
                     streamId = id,
@@ -199,12 +233,11 @@ class StalkerApi(
 
     /** Series categories — same shape as [vodCategories], under the `series` type. */
     suspend fun seriesCategories(source: Source): List<Category> = withContext(Dispatchers.IO) {
-        val arr = callRetrying(source, type = "series", action = "get_categories") as? JsonArray
-            ?: return@withContext emptyList()
+        val arr = listPayload(callRetrying(source, type = "series", action = "get_categories"))
         arr.mapIndexedNotNull { index, element ->
             val o = element as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o.str("id") ?: return@mapIndexedNotNull null
-            Category(id = id, sourceId = source.id, name = o.str("title") ?: id, kind = StreamKind.SERIES, sortIndex = index)
+            val id = o.firstString("id", "category_id", "genre_id") ?: return@mapIndexedNotNull null
+            Category(id = id, sourceId = source.id, name = o.firstString("title", "name", "category_name") ?: id, kind = StreamKind.SERIES, sortIndex = index)
         }
     }
 
@@ -219,8 +252,8 @@ class StalkerApi(
         fetchAllPagesStreaming(source, type = "series") { batch ->
             val series = batch.mapNotNull { element ->
                 val o = element as? JsonObject ?: return@mapNotNull null
-                val id = o.str("id") ?: return@mapNotNull null
-                val name = o.str("name") ?: return@mapNotNull null
+                val id = o.firstString("id", "movie_id", "series_id", "stream_id") ?: return@mapNotNull null
+                val name = o.firstString("name", "title") ?: return@mapNotNull null
                 Series(
                     sourceId = source.id,
                     seriesId = id,
@@ -259,20 +292,39 @@ class StalkerApi(
      */
     suspend fun seriesEpisodes(source: Source, seriesId: String): List<Episode> = withContext(Dispatchers.IO) {
         val showId = seriesId.substringBefore(':')
-        val js = callRetrying(source, type = "series", action = "get_ordered_list") { b ->
+        val raw = callRetrying(source, type = "series", action = "get_ordered_list") { b ->
             b.addQueryParameter("movie_id", showId)
             b.addQueryParameter("category", "*")
-        } as? JsonObject ?: return@withContext emptyList()
-        val seasons = js["data"] as? JsonArray ?: return@withContext emptyList()
-        seasons.flatMap seasonLoop@{ element ->
+        }
+        val seasons = listPayload(raw)
+
+        seasons.flatMapIndexed seasonLoop@{ index, element ->
             val o = element as? JsonObject ?: return@seasonLoop emptyList()
-            val seasonId = o.str("id") ?: return@seasonLoop emptyList()
-            val seasonNum = seasonId.substringAfter(':').toIntOrNull() ?: return@seasonLoop emptyList()
-            val cmd = o.str("cmd")?.takeIf { it.isNotBlank() } ?: return@seasonLoop emptyList()
-            val episodeNumbers = (o["series"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }
-                .orEmpty()
-            episodeNumbers.map { epNum ->
+            val seasonId = o.firstString("id", "season_id", "season")
+            val seasonNum = o.firstString("season", "season_number", "number")?.toIntOrNull()
+                ?: seasonId?.substringAfterLast(':')?.toIntOrNull()
+                ?: (index + 1)
+
+            val cmd = o.firstString("cmd", "command", "stream_cmd")
+                ?.takeIf { it.isNotBlank() } ?: return@seasonLoop emptyList()
+
+            val episodeNode = o["series"] ?: o["episodes"] ?: o["episode_numbers"]
+            val episodeNumbers = when (episodeNode) {
+                is JsonArray -> episodeNode.mapNotNull { item ->
+                    when (item) {
+                        is JsonPrimitive -> item.contentOrNull?.toIntOrNull()
+                        is JsonObject -> item.firstString("episode", "episode_num", "number", "id")?.toIntOrNull()
+                        else -> null
+                    }
+                }
+                is JsonPrimitive -> episodeNode.contentOrNull
+                    ?.split(',', ';', ' ')
+                    ?.mapNotNull { it.trim().toIntOrNull() }
+                    .orEmpty()
+                else -> emptyList()
+            }
+
+            episodeNumbers.distinct().map { epNum ->
                 Episode(
                     sourceId = source.id,
                     seriesId = seriesId,
@@ -283,7 +335,6 @@ class StalkerApi(
                     plot = null,
                     durationSeconds = null,
                     stillUrl = null,
-                    // Never played directly — see liveChannels'/vodMovies' identical marker.
                     streamUrl = "stalker://${source.id}/series/$showId/$seasonNum/$epNum",
                     cmd = "$cmd|$epNum",
                 )
@@ -316,19 +367,25 @@ class StalkerApi(
         type: String,
         onBatch: suspend (JsonArray) -> Unit,
     ): Unit = coroutineScope {
-        fun page(p: Int): JsonObject? =
+        fun page(p: Int): JsonElement? =
             callRetrying(source, type = type, action = "get_ordered_list") { b ->
                 b.addQueryParameter("category", "*")
                 b.addQueryParameter("p", p.toString())
-            } as? JsonObject
+            }
 
-        val first = page(1) ?: return@coroutineScope
-        val firstData = first["data"] as? JsonArray ?: return@coroutineScope
+        val firstRaw = page(1) ?: return@coroutineScope
+        val firstData = listPayload(firstRaw)
         if (firstData.isEmpty()) return@coroutineScope
         onBatch(firstData)
 
-        val pageSize = first.str("max_page_items")?.toIntOrNull()?.takeIf { it > 0 } ?: firstData.size
-        val totalItems = first.str("total_items")?.toIntOrNull() ?: firstData.size
+        val firstMeta = when (val u = unwrapPayload(firstRaw)) {
+            is JsonObject -> u
+            else -> firstRaw as? JsonObject
+        }
+        val pageSize = firstMeta?.firstString("max_page_items", "items_per_page", "per_page", "page_size")
+            ?.toIntOrNull()?.takeIf { it > 0 } ?: firstData.size
+        val totalItems = firstMeta?.firstString("total_items", "total", "count", "records")
+            ?.toIntOrNull() ?: firstData.size
         val totalPages = ((totalItems + pageSize - 1) / pageSize).coerceIn(1, MAX_PAGES)
         if (totalPages <= 1) return@coroutineScope
 
@@ -336,8 +393,8 @@ class StalkerApi(
         (2..totalPages).map { p ->
             async {
                 semaphore.withPermit {
-                    val data = page(p)?.get("data") as? JsonArray
-                    if (data != null && data.isNotEmpty()) onBatch(data)
+                    val data = listPayload(page(p))
+                    if (data.isNotEmpty()) onBatch(data)
                 }
             }
         }.awaitAll()
@@ -379,11 +436,10 @@ class StalkerApi(
             .addQueryParameter("token", "")
             .addQueryParameter("JsHttpRequest", "1-xml")
             .build()
-        val js = (execute(source, url, token = null) as? JsonObject)?.obj("js") ?: return null
-        val token = js.str("token")?.takeIf { it.isNotBlank() } ?: return null
-        // Some Ministra versions return a `random` at handshake that the box folds into the
-        // get_profile signature; capture it so we can.
-        return Handshake(token, js.str("random").orEmpty())
+        val payload = unwrapPayload(execute(source, url, token = null)) as? JsonObject ?: return null
+        val token = payload.firstString("token", "access_token", "auth_token")
+            ?.takeIf { it.isNotBlank() } ?: return null
+        return Handshake(token, payload.firstString("random", "challenge", "nonce").orEmpty())
     }
 
     /**
@@ -456,7 +512,7 @@ class StalkerApi(
             .addQueryParameter("JsHttpRequest", "1-xml")
         extra(builder)
         val body = execute(source, builder.build(), session.token) ?: return null
-        return (body as? JsonObject)?.get("js")
+        return unwrapPayload(body)
     }
 
     /**

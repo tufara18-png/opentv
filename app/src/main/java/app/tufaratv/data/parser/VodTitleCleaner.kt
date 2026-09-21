@@ -52,6 +52,7 @@ object VodTitleCleaner {
         "HR", "SR", "BG", "SK", "SL", "UK", "GB", "US", "USA", "CA", "CAN", "AU", "AUS",
         "NZ", "IE", "IN", "IND", "MX", "MEX", "ZA", "JP", "JPN", "KR", "KOR", "CN",
         "VN", "TH", "ID", "PH", "IR", "IL", "HE", "HEB", "AF", "ALB", "MULTI", "VO",
+        "VF", "VFF", "VFQ", "VOSTFR",
     )
 
     /**
@@ -98,7 +99,9 @@ object VodTitleCleaner {
      * are a known country/language code (see [stripTrailingCodes]). The `{2}` and letters-only class
      * are deliberate: a trailing release year is digits (`(2026)`) and never matches, so it survives.
      */
-    private val TRAILING_CODE_PAREN = Regex("""\s*[\[(]\s*([A-Za-z]{2})\s*[\])]\s*$""")
+    private val TRAILING_CODE_PAREN = Regex("""\s*[\[(]\s*([A-Za-z]{2,10})\s*[\])]\s*$""")
+    private val TRAILING_CODE_BARE = Regex("""\s+([A-Za-z]{2,10})\s*$""")
+    private val YEAR_LANGUAGE_PAREN = Regex("""[\[(]\s*((?:19|20)\d{2})\s+([A-Za-z]{2,10})\s*[\])]""")
 
     private val MULTI_SPACE = Regex("""\s+""")
 
@@ -114,7 +117,8 @@ object VodTitleCleaner {
 
         val deprefixed = stripLeadingPrefix(folded)
         val dequalified = stripStrayQuality(deprefixed)
-        val detrailed = stripTrailingCodes(dequalified)
+        val decombined = stripYearLanguageMetadata(dequalified)
+        val detrailed = stripTrailingCodes(decombined)
         val tidied = MULTI_SPACE.replace(detrailed, " ").trim().trim(*EDGE_JUNK).trim()
         return tidied.ifBlank { folded }
     }
@@ -145,7 +149,42 @@ object VodTitleCleaner {
      *  entry in [ChannelNameNormalizer]'s extra-token table). */
     private val PARSE_SPLIT = Regex("""[\s/|:;,()\[\]-]+""")
 
-    private val EMBEDDED_YEAR = Regex("""\b(19|20)\d{2}\b""")
+    private val PAREN_RELEASE_YEAR = Regex("""[\[(]\s*((?:19|20)\d{2})\s*[\])]""")
+    private val TRAILING_RELEASE_YEAR = Regex("""\b((?:19|20)\d{2})\s*$""")
+
+    /**
+     * Best-effort release-year extraction that deliberately avoids treating every four-digit number
+     * in a title as metadata. Parenthesized years are strong evidence. A bare year is accepted only
+     * at the end of the already-cleaned title, only when it is temporally plausible, and only when
+     * there is enough real title text before it. This keeps "2001: A Space Odyssey", "1917" and
+     * "Blade Runner 2049" intact while still recognizing provider forms like "The Godfather 1972".
+     * A structured provider year remains more trustworthy and is supplied separately by callers.
+     */
+    fun inferReleaseYear(raw: String): Int? {
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        fun plausible(value: Int): Boolean = value in 1900..(currentYear + 2)
+
+        val parenthesized = PAREN_RELEASE_YEAR.findAll(raw)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .filter(::plausible)
+            .toList()
+        if (parenthesized.isNotEmpty()) return parenthesized.last()
+
+        val cleaned = clean(raw)
+        val match = TRAILING_RELEASE_YEAR.find(cleaned) ?: return null
+        val year = match.groupValues[1].toIntOrNull()?.takeIf(::plausible) ?: return null
+        val prefix = cleaned.substring(0, match.range.first).trim()
+        val words = prefix.split(Regex("""\s+"""))
+            .filter { token -> token.any(Char::isLetter) }
+        if (words.isEmpty()) return null
+
+        // One-word films ("Oppenheimer 2023") are common. Reject only patterns where the year is
+        // much more likely to be part of the title itself than provider metadata.
+        val foldedPrefix = prefix.lowercase()
+        val articleOnly = foldedPrefix in setOf("the", "a", "an", "le", "la", "les", "el", "los", "las")
+        val titlePhraseYear = foldedPrefix.endsWith(" of")
+        return year.takeIf { !articleOnly && !titlePhraseYear }
+    }
 
     fun parse(raw: String): ParsedVodTitle {
         val folded = ChannelNameNormalizer.foldSuperscripts(raw)
@@ -171,7 +210,7 @@ object VodTitleCleaner {
 
         return ParsedVodTitle(
             title = clean(raw),
-            year = EMBEDDED_YEAR.find(raw)?.value?.toIntOrNull(),
+            year = inferReleaseYear(raw),
             qualityLabel = qualityLabel,
             qualityRank = qualityRank,
             language = language,
@@ -240,11 +279,28 @@ object VodTitleCleaner {
         return input.split(' ')
             .filter { part ->
                 val bare = part.trim('.', ',', ':', ';', '|', '-', '(', ')', '[', ']')
-                // Keep punctuation-only tokens (real separators) and anything that isn't a quality tag.
-                bare.isEmpty() || ChannelNameNormalizer.qualityRankOfToken(bare) == null
+                // Keep punctuation-only tokens (real separators) and real title tokens. Quality,
+                // codec and HDR markers are metadata, never part of the canonical display identity.
+                bare.isEmpty() ||
+                    (ChannelNameNormalizer.qualityRankOfToken(bare) == null &&
+                        !ChannelNameNormalizer.isStreamMarker(bare))
             }
             .joinToString(" ")
     }
+
+    /**
+     * "(2026 EN)" -> "(2026)", "(2026 MULTI)" -> "(2026)": a language/multi-language qualifier
+     * sitting next to the release year is display noise once the title is shown as clean TMDB-
+     * style metadata — the structured [app.tufaratv.data.model.Movie.language] field (parsed
+     * separately) is what `PREFERRED_MOVIE_LANGUAGES` filtering actually reads, not this string,
+     * so stripping it from the *display* title costs nothing functionally.
+     */
+    private fun stripYearLanguageMetadata(input: String): String =
+        YEAR_LANGUAGE_PAREN.replace(input) { match ->
+            val year = match.groupValues[1]
+            val language = match.groupValues[2].uppercase()
+            if (language in LANG_CODES) "($year)" else match.value
+        }
 
     /**
      * Strips a trailing bracketed 2-letter country/language tag — `Our Sticky Love (2026) (KR)` →
@@ -255,9 +311,21 @@ object VodTitleCleaner {
     private fun stripTrailingCodes(input: String): String {
         var s = input.trim()
         while (true) {
-            val match = TRAILING_CODE_PAREN.find(s) ?: break
-            if (match.groupValues[1].uppercase() !in LANG_CODES) break
-            s = s.substring(0, match.range.first).trim()
+            val bracketed = TRAILING_CODE_PAREN.find(s)
+            if (bracketed != null && bracketed.groupValues[1].uppercase() in LANG_CODES) {
+                s = s.substring(0, bracketed.range.first).trim()
+                continue
+            }
+
+            val bare = TRAILING_CODE_BARE.find(s)
+            if (bare != null) {
+                val token = bare.groupValues[1]
+                if (token == token.uppercase() && token in LANG_CODES) {
+                    s = s.substring(0, bare.range.first).trim()
+                    continue
+                }
+            }
+            break
         }
         return s
     }

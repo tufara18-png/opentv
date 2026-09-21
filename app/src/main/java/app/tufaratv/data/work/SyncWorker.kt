@@ -21,7 +21,10 @@ import app.tufaratv.data.repo.CatalogRepository
 import java.util.concurrent.TimeUnit
 
 /**
- * Background refresh of the catalogue and the guide.
+ * Lightweight background refresh of live channels and the guide.
+ *
+ * The VOD catalogue is intentionally excluded: movies/series are a large persistent local library
+ * and are refreshed only during first-run preparation or explicitly from Settings > Catalogue.
  *
  * Runs on WorkManager rather than a foreground timer so it survives the app being killed,
  * which on a TV box happens constantly. Failures return [Result.retry] with WorkManager's
@@ -41,7 +44,7 @@ class SyncWorker(
         var anyFailed = false
 
         for (source in sources) {
-            when (val result = graph.catalogRepository.sync(source, now)) {
+            when (val result = graph.catalogRepository.syncLive(source, now)) {
                 is CatalogRepository.SyncResult.Success ->
                     Log.i(TAG, "Catalogue for ${source.name}: ${result.channelCount} channels")
                 is CatalogRepository.SyncResult.Failed -> {

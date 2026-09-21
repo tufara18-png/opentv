@@ -84,8 +84,10 @@ class M3uParserTest {
 
         val result = M3uParser.parse(playlist, sourceId = 1)
 
-        assertThat(result.channels).hasSize(1)
-        assertThat(result.channels.single().name).isEqualTo("Channel SD")
+        assertThat(result.channels).hasSize(2)
+        assertThat(result.channels.map { it.name }).containsExactly("Channel SD", "Channel HD").inOrder()
+        assertThat(result.channels.map { it.epgChannelId }).containsExactly("dup", "dup")
+        assertThat(result.channels.map { it.streamId }.distinct()).hasSize(2)
     }
 
     @Test
@@ -130,6 +132,51 @@ class M3uParserTest {
         """.trimIndent()
 
         assertThat(M3uParser.parse(playlist, sourceId = 1).channels.single().number).isEqualTo(101)
+    }
+
+    @Test
+    fun `m3u plus splits live movies and series episodes in one pass`() {
+        val playlist = """
+            #EXTM3U
+            #EXTINF:-1 tvg-id="tf1.fr" group-title="FR | TV",TF1 FHD
+            http://host/live/u/p/100.ts
+            #EXTINF:-1 group-title="FR | FILMS" tvg-logo="http://img/movie.jpg",FR - Dune (2021) FHD
+            http://host/movie/u/p/200.mkv
+            #EXTINF:-1 group-title="FR | SERIES" tvg-logo="http://img/show.jpg",Severance S01E02 - Half Loop
+            http://host/series/u/p/300.mkv
+        """.trimIndent()
+
+        val result = M3uParser.parse(playlist, sourceId = 42)
+
+        assertThat(result.channels).hasSize(1)
+        assertThat(result.movies).hasSize(1)
+        assertThat(result.series).hasSize(1)
+        assertThat(result.episodes).hasSize(1)
+
+        assertThat(result.movies.single().name).contains("Dune")
+        assertThat(result.movies.single().year).isEqualTo(2021)
+        assertThat(result.series.single().name).isEqualTo("Severance")
+
+        val episode = result.episodes.single()
+        assertThat(episode.season).isEqualTo(1)
+        assertThat(episode.episodeNumber).isEqualTo(2)
+        assertThat(episode.title).isEqualTo("Half Loop")
+        assertThat(episode.seriesId).isEqualTo(result.series.single().seriesId)
+    }
+
+    @Test
+    fun `ambiguous cinema group stays live without a movie url`() {
+        val playlist = """
+            #EXTM3U
+            #EXTINF:-1 group-title="Cinema",Cinema Premiere HD
+            http://host/live/u/p/555.ts
+        """.trimIndent()
+
+        val result = M3uParser.parse(playlist, sourceId = 1)
+
+        assertThat(result.channels).hasSize(1)
+        assertThat(result.movies).isEmpty()
+        assertThat(result.series).isEmpty()
     }
 
     @Test

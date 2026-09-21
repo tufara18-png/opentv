@@ -268,6 +268,35 @@ class AppSettings private constructor(context: Context) {
         set(value) { prefs.edit().putLong(KEY_LAST_CHANNEL, value).apply() }
 
     /**
+     * Recently tuned live channels, newest first. This is deliberately tiny and local: it gives
+     * Home a streaming-service-style "recent live" shelf without introducing another Room table
+     * or making live playback depend on a history write succeeding.
+     */
+    private val _recentChannelIds = MutableStateFlow(readRecentChannelIds())
+    val recentChannelIds: StateFlow<List<Long>> = _recentChannelIds.asStateFlow()
+
+    fun recordRecentChannel(id: Long) {
+        if (id <= 0L) return
+        val updated = buildList {
+            add(id)
+            _recentChannelIds.value.asSequence()
+                .filter { it != id }
+                .take(MAX_RECENT_CHANNELS - 1)
+                .forEach(::add)
+        }
+        prefs.edit().putString(KEY_RECENT_CHANNELS, updated.joinToString(",")).apply()
+        _recentChannelIds.value = updated
+        lastChannelId = id
+    }
+
+    private fun readRecentChannelIds(): List<Long> =
+        prefs.getString(KEY_RECENT_CHANNELS, "").orEmpty()
+            .split(',')
+            .mapNotNull { it.trim().toLongOrNull() }
+            .distinct()
+            .take(MAX_RECENT_CHANNELS)
+
+    /**
      * Video scaling in the player, as an [androidx.media3.ui.AspectRatioFrameLayout] RESIZE_MODE_*
      * constant (0 = Fit). Persisted so the choice survives leaving the player, which testers asked
      * for — picking Fill every single time you open a channel gets old fast.
@@ -397,6 +426,15 @@ class AppSettings private constructor(context: Context) {
         set(value) { prefs.edit().putLong(KEY_VOD_SYNCED_AT, value).apply() }
 
     /**
+     * True once the first full local library build has completed. Existing installs without this
+     * key are treated as prepared; the flag is explicitly set false only when the new first-run
+     * flow starts, so upgrades never get thrown back into onboarding.
+     */
+    var libraryPrepared: Boolean
+        get() = prefs.getBoolean(KEY_LIBRARY_PREPARED, true)
+        set(value) { prefs.edit().putBoolean(KEY_LIBRARY_PREPARED, value).apply() }
+
+    /**
      * The TMDB API key (v3 auth) used to fill in artwork/metadata a provider left blank, and to
      * drive the TMDB-first Movies/Shows catalogue. Ships with a default key baked into the app —
      * explicitly requested, knowing this repo is public and the key is visible to anyone who
@@ -410,6 +448,22 @@ class AppSettings private constructor(context: Context) {
         val trimmed = key.trim()
         prefs.edit().putString(KEY_TMDB_KEY, trimmed).apply()
         _tmdbApiKey.value = trimmed
+        clearTmdbBrowseCache()
+    }
+
+    fun tmdbBrowseCache(key: String): String? =
+        prefs.getString(KEY_TMDB_BROWSE_PREFIX + key, null)
+
+    fun putTmdbBrowseCache(key: String, value: String) {
+        prefs.edit().putString(KEY_TMDB_BROWSE_PREFIX + key, value).apply()
+    }
+
+    fun clearTmdbBrowseCache() {
+        val editor = prefs.edit()
+        prefs.all.keys
+            .filter { it.startsWith(KEY_TMDB_BROWSE_PREFIX) }
+            .forEach(editor::remove)
+        editor.apply()
     }
 
     // ---- Stremio add-ons ---------------------------------------------------------------------
@@ -504,7 +558,9 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_CONTENT_MOVIES = "content_movies"
         private const val KEY_CONTENT_SERIES = "content_series"
         private const val KEY_LAST_CHANNEL = "last_channel_id"
+        private const val KEY_RECENT_CHANNELS = "recent_channel_ids"
         private const val KEY_RESIZE_MODE = "player_resize_mode"
+        private const val MAX_RECENT_CHANNELS = 12
         private const val KEY_LANGUAGE = "language_tag"
 
         /**
@@ -525,7 +581,9 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_SYNC_DEVICE_ID = "sync_device_id"
         private const val KEY_NAS_AUTO_SYNC = "nas_auto_sync"
         private const val KEY_VOD_SYNCED_AT = "vod_synced_at"
+        private const val KEY_LIBRARY_PREPARED = "library_prepared"
         private const val KEY_TMDB_KEY = "tmdb_api_key"
+        private const val KEY_TMDB_BROWSE_PREFIX = "tmdb_browse_cache_"
         // Baked-in default so the TMDB-first catalogue works with no setup step — see the doc
         // comment on _tmdbApiKey for why this is a deliberate, public key.
         private const val DEFAULT_TMDB_KEY = "9cbb3977d74b67ad7bbd138c59a9820c"

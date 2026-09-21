@@ -159,4 +159,125 @@ class CanonicalMatcherTest {
         assertThat(a.titleKey).isEqualTo(b.titleKey)
         assertThat(a.year).isEqualTo(b.year)
     }
+    @Test
+    fun `title years are preserved and release years are separated correctly`() {
+        val spaceOdyssey = CanonicalMatcher.keyOf("2001: A Space Odyssey (1968)")
+        assertThat(spaceOdyssey.titleKey).isEqualTo("2001aspaceodyssey")
+        assertThat(spaceOdyssey.year).isEqualTo(1968)
+
+        val bladeRunner = CanonicalMatcher.keyOf("Blade Runner 2049")
+        assertThat(bladeRunner.titleKey).isEqualTo("bladerunner2049")
+        assertThat(bladeRunner.year).isNull()
+
+        val bladeRunnerDated = CanonicalMatcher.keyOf("Blade Runner 2049 (2017) 4K")
+        assertThat(bladeRunnerDated.titleKey).isEqualTo("bladerunner2049")
+        assertThat(bladeRunnerDated.year).isEqualTo(2017)
+    }
+
+    @Test
+    fun `dirty multi-source variants of the same movie converge to one canonical key`() {
+        val sourceA = CanonicalMatcher.keyOf("FR| Oppenheimer (2023) FHD")
+        val sourceB = CanonicalMatcher.keyOf("[MULTI] Oppenheimer 2023 4K")
+        val sourceC = CanonicalMatcher.keyOf("AMZ - Oppenheimer (2023) HEVC HDR")
+
+        assertThat(sourceA.titleKey).isEqualTo("oppenheimer")
+        assertThat(sourceB.titleKey).isEqualTo("oppenheimer")
+        assertThat(sourceC.titleKey).isEqualTo("oppenheimer")
+        assertThat(setOf(sourceA.year, sourceB.year, sourceC.year)).containsExactly(2023)
+    }
+
+    @Test
+    fun `same provider title with different release years remains split for remakes`() {
+        val dune1984 = canonical(id = 1, title = "Dune", titleKey = "dune", year = 1984)
+        val dune2021 = canonical(id = 2, title = "Dune", titleKey = "dune", year = 2021)
+
+        val old = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate("Dune (1984) FHD"),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(dune1984, dune2021),
+        )
+        val modern = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate("Dune (2021) 4K"),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(dune1984, dune2021),
+        )
+
+        assertThat(old.existingId).isEqualTo(1)
+        assertThat(modern.existingId).isEqualTo(2)
+    }
+
+    @Test
+    fun `same tmdb id beats localized provider titles completely`() {
+        val existing = canonical(id = 55, tmdbId = "129", title = "Spirited Away", titleKey = "spiritedaway", year = 2001)
+        val decision = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate(
+                rawName = "FR| Le Voyage de Chihiro FHD",
+                explicitYear = 2001,
+                tmdbId = "129",
+            ),
+            existingByTmdbId = existing,
+            existingByTitleKey = emptyList(),
+        )
+
+        assertThat(decision.action).isEqualTo(CanonicalMatcher.Action.LINK_EXISTING)
+        assertThat(decision.existingId).isEqualTo(55)
+        assertThat(decision.matchKind).isEqualTo(CanonicalMatchKind.TMDB)
+    }
+
+    @Test
+    fun `different tmdb ids never merge just because provider titles look identical`() {
+        val otherDune = canonical(id = 1, tmdbId = "841", title = "Dune", titleKey = "dune", year = 1984)
+        val decision = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate("Dune", explicitYear = 2021, tmdbId = "438631"),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(otherDune),
+        )
+
+        assertThat(decision.action).isEqualTo(CanonicalMatcher.Action.CREATE_NEW)
+        assertThat(decision.matchKind).isEqualTo(CanonicalMatchKind.TMDB)
+    }
+
+
+    @Test
+    fun `structured provider year wins without polluting the title key with a bad embedded year`() {
+        val key = CanonicalMatcher.keyOf("The Wilds (2019) FHD", explicitYear = 2020)
+
+        assertThat(key.titleKey).isEqualTo("thewilds")
+        assertThat(key.year).isEqualTo(2020)
+    }
+
+
+    @Test
+    fun `new provider tmdb id promotes one unambiguous title-year canonical instead of duplicating it`() {
+        val existing = canonical(id = 9, tmdbId = null, title = "Oppenheimer", titleKey = "oppenheimer", year = 2023)
+        val decision = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate(
+                rawName = "[MULTI] Oppenheimer 2023 4K",
+                explicitYear = 2023,
+                tmdbId = "872585",
+            ),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(existing),
+        )
+
+        assertThat(decision.action).isEqualTo(CanonicalMatcher.Action.LINK_EXISTING)
+        assertThat(decision.existingId).isEqualTo(9)
+        assertThat(decision.matchKind).isEqualTo(CanonicalMatchKind.TMDB)
+    }
+
+    @Test
+    fun `provider tmdb id does not promote an ambiguous yearless remake match`() {
+        val dune1984 = canonical(id = 1, tmdbId = null, title = "Dune", titleKey = "dune", year = 1984)
+        val dune2021 = canonical(id = 2, tmdbId = null, title = "Dune", titleKey = "dune", year = 2021)
+        val decision = CanonicalMatcher.decide(
+            candidate = CanonicalMatcher.Candidate(rawName = "Dune", tmdbId = "438631"),
+            existingByTmdbId = null,
+            existingByTitleKey = listOf(dune1984, dune2021),
+        )
+
+        assertThat(decision.action).isEqualTo(CanonicalMatcher.Action.CREATE_NEW)
+        assertThat(decision.matchKind).isEqualTo(CanonicalMatchKind.TMDB)
+    }
+
+
 }

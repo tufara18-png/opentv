@@ -648,6 +648,12 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun byId(id: Long): Episode?
 
+    /** Every local/provider row behind one canonical episode, best advertised quality first.
+     *  Used by the in-player "Next episode" transition to keep playback inside the player while
+     *  still handing the next episode's complete source ladder to the normal selector. */
+    @Query("SELECT * FROM episodes WHERE canonicalEpisodeId = :canonicalEpisodeId ORDER BY qualityRank DESC")
+    suspend fun byCanonicalEpisodeId(canonicalEpisodeId: Long): List<Episode>
+
     @Query("SELECT * FROM episodes WHERE streamUrl = :url LIMIT 1")
     suspend fun byStreamUrl(url: String): Episode?
 
@@ -1015,6 +1021,18 @@ interface CanonicalEpisodeDao {
 
     @Query("SELECT * FROM canonical_episodes WHERE id = :id")
     suspend fun byId(id: Long): CanonicalEpisode?
+
+    /** The immediately following canonical episode, crossing season boundaries naturally. */
+    @Query(
+        """
+        SELECT * FROM canonical_episodes
+        WHERE canonicalSeriesId = :canonicalSeriesId
+          AND (season > :season OR (season = :season AND episodeNumber > :episodeNumber))
+        ORDER BY season, episodeNumber
+        LIMIT 1
+        """
+    )
+    suspend fun nextAfter(canonicalSeriesId: Long, season: Int, episodeNumber: Int): CanonicalEpisode?
 
     @Query(
         "SELECT * FROM canonical_episodes WHERE canonicalSeriesId = :canonicalSeriesId " +

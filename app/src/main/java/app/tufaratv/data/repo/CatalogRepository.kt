@@ -85,6 +85,16 @@ sealed interface PersonTitle {
 /** One quality variant of a film, with the quality parsed from its name by [ChannelNameNormalizer]. */
 data class MovieVariant(val movie: Movie, val qualityLabel: String, val qualityRank: Int)
 
+/** Route-sized playback target for moving to the next episode without leaving the full-screen player. */
+data class NextEpisodePlayback(
+    val mediaKey: String,
+    val streamUrl: String,
+    val title: String,
+    val userAgent: String,
+    val contentKey: String,
+    val variantsKey: String,
+)
+
 /** One logical film with its switchable quality tiers, best first — the VOD analogue of a channel group. */
 @androidx.compose.runtime.Immutable
 data class MovieVariantGroup(
@@ -133,9 +143,6 @@ private fun dedupeSeriesByCanonical(series: List<Series>): List<Series> {
     return byKey.values.toList()
 }
 
-/** A standalone 4-digit release year (19xx/20xx) as it appears inside a VOD title. */
-private val VOD_YEAR = Regex("""\b(19|20)\d{2}\b""")
-
 /** The [SourceVariant.language] tags [CatalogRepository.movieVariants] treats as "understood" —
  *  French, Italian, or an explicitly multi-language copy. Matches [VodTitleCleaner]'s own token
  *  spellings for those (`FR`/`FRA`/`FRE`, `IT`/`ITA`, `MULTI`), uppercased before comparing. */
@@ -155,13 +162,14 @@ private val PREFERRED_MOVIE_LANGUAGES = setOf("FR", "FRA", "FRE", "IT", "ITA", "
 internal fun collapseMovieVariants(movies: List<Movie>): List<MovieVariantGroup> {
     val groups = LinkedHashMap<String, MutableList<MovieVariant>>()
     for (movie in movies) {
-        val embeddedYear = VOD_YEAR.find(movie.name)?.value?.toIntOrNull()
-        val bareName = VOD_YEAR.replace(movie.name, " ")
-        val normalized = ChannelNameNormalizer.normalize(bareName)
-        val year = movie.year ?: embeddedYear
-        val key = normalized.groupKey + "|" + (year?.toString() ?: "")
+        val identity = CanonicalMatcher.keyOf(movie.name, movie.year)
+        val parsed = VodTitleCleaner.parse(movie.name)
+        // Once sync has resolved a canonical identity, that id beats every title heuristic.
+        // Only rows in the brief pre-link window fall back to normalized title + release year.
+        val key = movie.canonicalId?.let { "canonical:$it" }
+            ?: "heuristic:${identity.titleKey}|${identity.year?.toString() ?: ""}"
         groups.getOrPut(key) { mutableListOf() }
-            .add(MovieVariant(movie, normalized.qualityLabel, normalized.qualityRank))
+            .add(MovieVariant(movie, parsed.qualityLabel, parsed.qualityRank))
     }
     return groups.values.map { variants ->
         val ordered = variants.sortedWith(
@@ -295,6 +303,41 @@ class CatalogRepository(
     }
 
     suspend fun episode(id: Long): Episode? = episodeDao.byId(id)
+
+    /**
+     * Resolves the episode immediately following [localEpisodeId] in canonical series order.
+     *
+     * The returned URL is only the initial/default stream. [variantsKey] points the VOD player at
+     * the next canonical episode, so its normal source/quality ladder is rebuilt after navigation
+     * and the series-scoped [contentKey] keeps the viewer's source/quality preferences intact.
+     */
+    suspend fun nextEpisode(localEpisodeId: Long): NextEpisodePlayback? = withContext(Dispatchers.IO) {
+        val current = episodeDao.byId(localEpisodeId) ?: return@withContext null
+        val currentCanonicalId = current.canonicalEpisodeId ?: return@withContext null
+        val currentCanonical = canonicalEpisodeDao.byId(currentCanonicalId) ?: return@withContext null
+        val next = canonicalEpisodeDao.nextAfter(
+            canonicalSeriesId = currentCanonical.canonicalSeriesId,
+            season = currentCanonical.season,
+            episodeNumber = currentCanonical.episodeNumber,
+        ) ?: return@withContext null
+        val rows = episodeDao.byCanonicalEpisodeId(next.id)
+        if (rows.isEmpty()) return@withContext null
+
+        // Prefer continuity on the same provider when that episode exists there. Otherwise use the
+        // best advertised quality; the player may still pick another source from the full ladder.
+        val chosen = rows.firstOrNull { it.sourceId == current.sourceId }
+            ?: rows.maxByOrNull { it.qualityRank }
+            ?: return@withContext null
+        val source = sourceDao.byId(chosen.sourceId)
+        NextEpisodePlayback(
+            mediaKey = "ep:${chosen.id}",
+            streamUrl = chosen.streamUrl,
+            title = "S${next.season}E${next.episodeNumber} · ${next.title}",
+            userAgent = source?.userAgent ?: "TufaraTV/0.1 (Android)",
+            contentKey = "series:${next.canonicalSeriesId}",
+            variantsKey = "episode:${next.id}",
+        )
+    }
 
     suspend fun movieByStreamUrl(url: String): Movie? = movieDao.byStreamUrl(url)
 
@@ -430,22 +473,45 @@ class CatalogRepository(
      * same source/category when the movie has no genre metadata to match on.
      */
     suspend fun moreLikeThis(movie: Movie, limit: Int = 20): List<Movie> = withContext(Dispatchers.IO) {
+        // Prefer TMDB's actual recommendation graph when this title has a stable identity, then
+        // intersect it with locally playable canonical entries. Provider genre overlap remains the
+        // offline fallback, never the primary recommender.
+        val tmdbPicks = movie.tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+            runCatching { tmdb.recommendations(id, isMovie = true) }.getOrDefault(emptyList())
+                .mapNotNull { item ->
+                    val canonical = canonicalMovieDao.findByTmdbId(item.tmdbId) ?: run {
+                        val key = CanonicalMatcher.keyOf(item.title, item.year).titleKey
+                        canonicalMovieDao.findAllByTitleKey(key)
+                            .firstOrNull { it.year == null || item.year == null || it.year == item.year }
+                    }
+                    canonical?.let { movieDao.byCanonicalIds(listOf(it.id)).maxByOrNull(Movie::qualityRank) }
+                }
+                .filter { it.id != movie.id }
+                .distinctBy { it.canonicalId ?: it.id }
+                .take(limit)
+        }.orEmpty()
+        if (tmdbPicks.size >= minOf(6, limit)) return@withContext tmdbPicks
+
         val genres = splitGenres(movie.genre).toSet()
-        if (genres.isEmpty()) {
-            return@withContext movieDao.similarByCategory(movie.sourceId, movie.categoryId, movie.id, limit)
+        val fallback = if (genres.isEmpty()) {
+            movieDao.similarByCategory(movie.sourceId, movie.categoryId, movie.id, limit)
+        } else {
+            allMovies().asSequence()
+                .filter { it.id != movie.id }
+                .map { it to sharedGenreCount(it.genre, genres) }
+                .filter { it.second > 0 }
+                .sortedWith(
+                    compareByDescending<Pair<Movie, Int>> { it.second }
+                        .thenByDescending { it.first.sourceId == movie.sourceId }
+                        .thenByDescending { it.first.rating ?: -1.0 },
+                )
+                .map { it.first }
+                .take(limit)
+                .toList()
         }
-        allMovies().asSequence()
-            .filter { it.id != movie.id }
-            .map { it to sharedGenreCount(it.genre, genres) }
-            .filter { it.second > 0 }
-            .sortedWith(
-                compareByDescending<Pair<Movie, Int>> { it.second }
-                    .thenByDescending { it.first.sourceId == movie.sourceId }
-                    .thenByDescending { it.first.rating ?: -1.0 },
-            )
-            .map { it.first }
+        (tmdbPicks + fallback)
+            .distinctBy { it.canonicalId ?: it.id }
             .take(limit)
-            .toList()
     }
 
     // ---- Related by person (Plex-style "click an actor / director") ----------------------------
@@ -492,22 +558,42 @@ class CatalogRepository(
 
     /** "More Like This" for a series. See [moreLikeThis]. */
     suspend fun moreLikeThisSeries(series: Series, limit: Int = 20): List<Series> = withContext(Dispatchers.IO) {
+        val tmdbPicks = series.tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+            runCatching { tmdb.recommendations(id, isMovie = false) }.getOrDefault(emptyList())
+                .mapNotNull { item ->
+                    val canonical = canonicalSeriesDao.findByTmdbId(item.tmdbId) ?: run {
+                        val key = CanonicalMatcher.keyOf(item.title, item.year).titleKey
+                        canonicalSeriesDao.findAllByTitleKey(key)
+                            .firstOrNull { it.year == null || item.year == null || it.year == item.year }
+                    }
+                    canonical?.let { seriesDao.byCanonicalIds(listOf(it.id)).maxByOrNull(Series::qualityRank) }
+                }
+                .filter { it.id != series.id }
+                .distinctBy { it.canonicalId ?: it.id }
+                .take(limit)
+        }.orEmpty()
+        if (tmdbPicks.size >= minOf(6, limit)) return@withContext tmdbPicks
+
         val genres = splitGenres(series.genre).toSet()
-        if (genres.isEmpty()) {
-            return@withContext seriesDao.similarByCategory(series.sourceId, series.categoryId, series.id, limit)
+        val fallback = if (genres.isEmpty()) {
+            seriesDao.similarByCategory(series.sourceId, series.categoryId, series.id, limit)
+        } else {
+            allSeries().asSequence()
+                .filter { it.id != series.id }
+                .map { it to sharedGenreCount(it.genre, genres) }
+                .filter { it.second > 0 }
+                .sortedWith(
+                    compareByDescending<Pair<Series, Int>> { it.second }
+                        .thenByDescending { it.first.sourceId == series.sourceId }
+                        .thenByDescending { it.first.rating ?: -1.0 },
+                )
+                .map { it.first }
+                .take(limit)
+                .toList()
         }
-        allSeries().asSequence()
-            .filter { it.id != series.id }
-            .map { it to sharedGenreCount(it.genre, genres) }
-            .filter { it.second > 0 }
-            .sortedWith(
-                compareByDescending<Pair<Series, Int>> { it.second }
-                    .thenByDescending { it.first.sourceId == series.sourceId }
-                    .thenByDescending { it.first.rating ?: -1.0 },
-            )
-            .map { it.first }
+        (tmdbPicks + fallback)
+            .distinctBy { it.canonicalId ?: it.id }
             .take(limit)
-            .toList()
     }
 
     /**
@@ -551,7 +637,7 @@ class CatalogRepository(
         //    second half is what makes this self-healing for a row that matched TMDB *before* this
         //    title-override existed, instead of needing a manual resync to ever pick it up. Once a
         //    match's title is genuinely clean, `clean(name) == name` and this stops re-querying.
-        if (tmdb.isConfigured() && (result.tmdbId == null || VodTitleCleaner.clean(result.name) != result.name)) {
+        if (tmdb.isConfigured() && needsTmdbRefresh(result)) {
             val meta = runCatching {
                 tmdb.movieMeta(VodTitleCleaner.clean(result.name), result.year, result.tmdbId)
             }.getOrNull()
@@ -576,6 +662,11 @@ class CatalogRepository(
         }
 
         if (result != movie) movieDao.upsertAll(listOf(result))
+        val canonicalId = reconcileMovieCanonical(result)
+        if (canonicalId != null && canonicalId != result.canonicalId) {
+            movieDao.setCanonical(result.id, canonicalId, CanonicalMatchKind.TMDB)
+            result = result.copy(canonicalId = canonicalId, canonicalMatchKind = CanonicalMatchKind.TMDB)
+        }
         result
     }
 
@@ -604,7 +695,7 @@ class CatalogRepository(
         // 2) TMDB is the source of truth once matched — see [movieDetail]'s step 2 for why this
         //    overrides rather than just fills gaps, why the gate also re-tries a dirty-looking
         //    name, and why that's what makes it self-healing. TMDB has no director for TV.
-        if (tmdb.isConfigured() && (result.tmdbId == null || VodTitleCleaner.clean(result.name) != result.name)) {
+        if (tmdb.isConfigured() && needsTmdbRefresh(result)) {
             val meta = runCatching {
                 tmdb.seriesMeta(VodTitleCleaner.clean(result.name), result.year, result.tmdbId)
             }.getOrNull()
@@ -625,7 +716,134 @@ class CatalogRepository(
         }
 
         if (result != series) seriesDao.upsertAll(listOf(result))
+        val canonicalId = reconcileSeriesCanonical(result)
+        if (canonicalId != null && canonicalId != result.canonicalId) {
+            seriesDao.setCanonical(result.id, canonicalId, CanonicalMatchKind.TMDB)
+            result = result.copy(canonicalId = canonicalId, canonicalMatchKind = CanonicalMatchKind.TMDB)
+        }
         result
+    }
+
+    private fun needsTmdbRefresh(movie: Movie): Boolean =
+        movie.tmdbId == null ||
+            VodTitleCleaner.clean(movie.name) != movie.name ||
+            movie.posterUrl == null || movie.backdropUrl == null || movie.plot.isNullOrBlank() ||
+            movie.cast.isNullOrBlank() || movie.genre.isNullOrBlank() || movie.rating == null || movie.year == null
+
+    private fun needsTmdbRefresh(series: Series): Boolean =
+        series.tmdbId == null ||
+            VodTitleCleaner.clean(series.name) != series.name ||
+            series.posterUrl == null || series.backdropUrl == null || series.plot.isNullOrBlank() ||
+            series.cast.isNullOrBlank() || series.genre.isNullOrBlank() || series.rating == null || series.year == null
+
+    private suspend fun reconcileMovieCanonical(movie: Movie): Long? {
+        val tmdbId = movie.tmdbId?.takeIf { it.isNotBlank() } ?: return movie.canonicalId
+        val current = movie.canonicalId?.let { canonicalMovieDao.byId(it) }
+        val exact = canonicalMovieDao.findByTmdbId(tmdbId)
+        val winner = when {
+            exact != null -> exact
+            current != null -> current
+            else -> return null
+        }
+        val loser = current?.takeIf { it.id != winner.id }
+        val title = VodTitleCleaner.stripRedundantYear(movie.name, movie.year)
+        canonicalMovieDao.update(
+            winner.copy(
+                tmdbId = tmdbId,
+                title = title,
+                titleKey = CanonicalMatcher.keyOf(title, movie.year).titleKey,
+                year = movie.year ?: winner.year,
+                posterUrl = movie.posterUrl ?: winner.posterUrl,
+                backdropUrl = movie.backdropUrl ?: winner.backdropUrl,
+                plot = movie.plot ?: winner.plot,
+                rating = movie.rating ?: winner.rating,
+                genre = movie.genre ?: winner.genre,
+                cast = movie.cast ?: winner.cast,
+                director = movie.director ?: winner.director,
+                favourite = winner.favourite || (loser?.favourite == true),
+                lastViewedMillis = maxOf(winner.lastViewedMillis, loser?.lastViewedMillis ?: 0L),
+                alsoKnownAs = mergeAlsoKnownAs(
+                    mergeAlsoKnownAs(winner.alsoKnownAs, title, winner.title),
+                    title,
+                    loser?.title.orEmpty(),
+                ),
+            ),
+        )
+        if (loser != null) {
+            canonicalMovieDao.repointVariants(loser.id, winner.id)
+            migratePreferredVariant("movie:${loser.id}", "movie:${winner.id}")
+            canonicalMovieDao.delete(loser.id)
+        }
+        return winner.id
+    }
+
+    private suspend fun reconcileSeriesCanonical(series: Series): Long? {
+        val tmdbId = series.tmdbId?.takeIf { it.isNotBlank() } ?: return series.canonicalId
+        val current = series.canonicalId?.let { canonicalSeriesDao.byId(it) }
+        val exact = canonicalSeriesDao.findByTmdbId(tmdbId)
+        val winner = when {
+            exact != null -> exact
+            current != null -> current
+            else -> return null
+        }
+        val loser = current?.takeIf { it.id != winner.id }
+        val title = VodTitleCleaner.stripRedundantYear(series.name, series.year)
+        canonicalSeriesDao.update(
+            winner.copy(
+                tmdbId = tmdbId,
+                title = title,
+                titleKey = CanonicalMatcher.keyOf(title, series.year).titleKey,
+                year = series.year ?: winner.year,
+                posterUrl = series.posterUrl ?: winner.posterUrl,
+                backdropUrl = series.backdropUrl ?: winner.backdropUrl,
+                plot = series.plot ?: winner.plot,
+                rating = series.rating ?: winner.rating,
+                genre = series.genre ?: winner.genre,
+                cast = series.cast ?: winner.cast,
+                favourite = winner.favourite || (loser?.favourite == true),
+                lastViewedMillis = maxOf(winner.lastViewedMillis, loser?.lastViewedMillis ?: 0L),
+                alsoKnownAs = mergeAlsoKnownAs(
+                    mergeAlsoKnownAs(winner.alsoKnownAs, title, winner.title),
+                    title,
+                    loser?.title.orEmpty(),
+                ),
+            ),
+        )
+        if (loser != null) {
+            mergeCanonicalSeriesEpisodes(loser.id, winner.id)
+            canonicalSeriesDao.repointVariants(loser.id, winner.id)
+            migratePreferredVariant("series:${loser.id}", "series:${winner.id}")
+            canonicalSeriesDao.delete(loser.id)
+        }
+        return winner.id
+    }
+
+    private suspend fun mergeCanonicalSeriesEpisodes(loserSeriesId: Long, winnerSeriesId: Long) {
+        for (losingEpisode in canonicalEpisodeDao.forSeries(loserSeriesId)) {
+            val existing = canonicalEpisodeDao.findBySlot(winnerSeriesId, losingEpisode.season, losingEpisode.episodeNumber)
+            if (existing == null) {
+                canonicalEpisodeDao.update(losingEpisode.copy(canonicalSeriesId = winnerSeriesId))
+            } else {
+                canonicalEpisodeDao.repointVariants(losingEpisode.id, existing.id)
+                migratePreferredVariant("episode:${losingEpisode.id}", "episode:${existing.id}")
+                canonicalEpisodeDao.delete(losingEpisode.id)
+            }
+        }
+    }
+
+    private suspend fun migratePreferredVariant(oldKey: String, newKey: String) {
+        val old = preferredVariantDao.get(oldKey) ?: return
+        val current = preferredVariantDao.get(newKey)
+        preferredVariantDao.upsert(
+            old.copy(
+                contentKey = newKey,
+                sourceKey = current?.sourceKey ?: old.sourceKey,
+                qualityKey = current?.qualityKey ?: old.qualityKey,
+                engineKey = current?.engineKey ?: old.engineKey,
+                updatedAtMillis = maxOf(current?.updatedAtMillis ?: 0L, old.updatedAtMillis),
+            ),
+        )
+        preferredVariantDao.clear(oldKey)
     }
 
     /**
@@ -884,6 +1102,11 @@ class CatalogRepository(
     suspend fun tmdbSearch(query: String, isMovie: Boolean, page: Int = 1): List<TmdbListItem> =
         withContext(Dispatchers.IO) { runCatching { tmdb.search(query, isMovie, page) }.getOrDefault(emptyList()) }
 
+    suspend fun tmdbRecommendations(tmdbId: String, isMovie: Boolean, page: Int = 1): List<TmdbListItem> =
+        withContext(Dispatchers.IO) {
+            runCatching { tmdb.recommendations(tmdbId, isMovie, page) }.getOrDefault(emptyList())
+        }
+
     /** One shelf per TMDB genre (Action, Comédie, Horreur…) — the Netflix-style genre rail. Genres
      *  fetched once, then every genre's discover page is requested concurrently rather than one
      *  request after another, so a dozen-genre row of shelves still lands in about one round trip's
@@ -1053,7 +1276,15 @@ class CatalogRepository(
      *  [CanonicalContent.alsoKnownAs] if it differs from the canonical title — see [CanonicalMatcher]. */
     private suspend fun mergeIntoExistingMovie(existing: CanonicalContent, decision: CanonicalMatcher.Decision, movie: Movie) {
         val updated = existing.copy(
+            tmdbId = existing.tmdbId ?: movie.tmdbId.takeIf { decision.matchKind == CanonicalMatchKind.TMDB },
             year = existing.year ?: decision.key.year,
+            posterUrl = existing.posterUrl ?: movie.posterUrl,
+            backdropUrl = existing.backdropUrl ?: movie.backdropUrl,
+            plot = existing.plot ?: movie.plot,
+            rating = existing.rating ?: movie.rating,
+            genre = existing.genre ?: movie.genre,
+            cast = existing.cast ?: movie.cast,
+            director = existing.director ?: movie.director,
             alsoKnownAs = mergeAlsoKnownAs(existing.alsoKnownAs, existing.title, decision.key.displayTitle),
         )
         if (updated != existing) canonicalMovieDao.update(updated)
@@ -1061,7 +1292,14 @@ class CatalogRepository(
 
     private suspend fun mergeIntoExistingSeries(existing: CanonicalContent, decision: CanonicalMatcher.Decision, series: Series) {
         val updated = existing.copy(
+            tmdbId = existing.tmdbId ?: series.tmdbId.takeIf { decision.matchKind == CanonicalMatchKind.TMDB },
             year = existing.year ?: decision.key.year,
+            posterUrl = existing.posterUrl ?: series.posterUrl,
+            backdropUrl = existing.backdropUrl ?: series.backdropUrl,
+            plot = existing.plot ?: series.plot,
+            rating = existing.rating ?: series.rating,
+            genre = existing.genre ?: series.genre,
+            cast = existing.cast ?: series.cast,
             alsoKnownAs = mergeAlsoKnownAs(existing.alsoKnownAs, existing.title, decision.key.displayTitle),
         )
         if (updated != existing) canonicalSeriesDao.update(updated)
@@ -1088,9 +1326,11 @@ class CatalogRepository(
         val live =
             if (settings.liveEnabled.value) syncLive(source, nowUtcMillis)
             else SyncResult.Success(0, 0, 0)
-        if (live is SyncResult.Success && source.kind == SourceKind.XTREAM) {
-            runCatching { syncXtreamVod(source, nowUtcMillis) }
-                .onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+        if (live is SyncResult.Success) {
+            // Keep refresh semantics identical across provider protocols. Xtream, Stalker/Ministra
+            // and M3U+ all get the same VOD refresh hook; protocol-specific behavior lives inside
+            // syncVod rather than leaking into the scheduler.
+            syncVod(source, nowUtcMillis)
         }
         live
     }
@@ -1329,39 +1569,80 @@ class CatalogRepository(
             M3uParser.parse(stream, source.id)
         }
 
-        if (parsed.channels.isEmpty()) {
+        if (parsed.channels.isEmpty() && parsed.movies.isEmpty() && parsed.series.isEmpty()) {
             return SyncResult.Failed(
-                "No channels found in that playlist. Check the URL points at an M3U file.",
+                "No playable entries found in that playlist. Check the URL points at an M3U/M3U+ file.",
                 null,
             )
         }
 
-        // Synthesise categories from group-title so the UI has something to group by.
-        val categories = parsed.channels
-            .mapNotNull { it.categoryId }
-            .distinct()
-            .sorted()
-            .mapIndexed { index, name ->
+        fun categoriesOf(kind: StreamKind, ids: List<String?>): List<Category> =
+            ids.mapNotNull { it }.distinct().sorted().mapIndexed { index, name ->
                 Category(
                     id = name,
                     sourceId = source.id,
                     name = name,
-                    kind = StreamKind.LIVE,
+                    kind = kind,
                     sortIndex = index,
                 )
             }
 
-        categoryDao.upsertAll(categories)
-        val categoryNames = categories.associate { it.id to it.name }
-        channelDao.replaceCatalogue(source.id, normalized(parsed.channels, categoryNames), nowUtcMillis)
+        // One m3u_plus download can contain all three libraries. Split them here, then feed the
+        // same Room/canonical pipeline the native Xtream and Stalker adapters use.
+        val liveCategories = categoriesOf(StreamKind.LIVE, parsed.channels.map { it.categoryId })
+        val movieCategories = categoriesOf(StreamKind.MOVIE, parsed.movies.map { it.categoryId })
+        val seriesCategories = categoriesOf(StreamKind.SERIES, parsed.series.map { it.categoryId })
+        val allCategories = buildList {
+            addAll(liveCategories)
+            if (settings.moviesEnabled.value) addAll(movieCategories)
+            if (settings.seriesEnabled.value) addAll(seriesCategories)
+        }
+        if (allCategories.isNotEmpty()) categoryDao.upsertAll(allCategories)
 
-        // If the playlist declared its own guide URL and the user did not set one, adopt it.
+        val liveCategoryNames = liveCategories.associate { it.id to it.name }
+        if (parsed.channels.isNotEmpty()) {
+            channelDao.replaceCatalogue(
+                source.id,
+                normalized(parsed.channels, liveCategoryNames),
+                nowUtcMillis,
+            )
+        }
+
+        val movies = if (settings.moviesEnabled.value) stampedMovieQuality(parsed.movies) else emptyList()
+        if (movies.isNotEmpty()) {
+            movieDao.upsertAll(movies)
+            linkMoviesToCanonical(source.id)
+        }
+
+        val series = if (settings.seriesEnabled.value) stampedSeriesQuality(parsed.series) else emptyList()
+        val episodes = if (settings.seriesEnabled.value) stampedEpisodeQuality(parsed.episodes) else emptyList()
+        if (series.isNotEmpty()) {
+            seriesDao.upsertAll(series)
+            linkSeriesToCanonical(source.id)
+        }
+        if (episodes.isNotEmpty()) {
+            episodeDao.upsertAll(episodes)
+            // The series rows are canonical-linked first. Now every episode can be linked by its
+            // exact season/episode slot, same as Xtream/Stalker lazy episode imports.
+            episodes.groupBy { it.seriesId }.forEach { (seriesId, _) ->
+                val seriesRow = seriesDao.bySourceAndSeriesId(source.id, seriesId)
+                val canonicalSeriesId = seriesRow?.canonicalId
+                if (canonicalSeriesId != null) {
+                    linkEpisodesToCanonical(source.id, seriesId, canonicalSeriesId)
+                }
+            }
+        }
+
         if (source.epgUrl.isNullOrBlank() && !parsed.declaredEpgUrl.isNullOrBlank()) {
             sourceDao.update(source.copy(epgUrl = parsed.declaredEpgUrl))
         }
 
         sourceDao.markCatalogSynced(source.id, nowUtcMillis)
-        return SyncResult.Success(parsed.channels.size, 0, 0)
+        return SyncResult.Success(
+            channelCount = parsed.channels.size,
+            movieCount = movies.size,
+            seriesCount = series.size,
+        )
     }
 
     /**

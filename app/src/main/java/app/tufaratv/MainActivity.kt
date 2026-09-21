@@ -66,6 +66,7 @@ import app.tufaratv.ui.onboarding.AddSourceScreen
 import app.tufaratv.ui.player.PlayerScreen
 import app.tufaratv.ui.settings.AboutScreen
 import app.tufaratv.ui.settings.AppSettingsScreen
+import app.tufaratv.ui.settings.CatalogueSettingsScreen
 import app.tufaratv.ui.settings.EpgSettingsScreen
 import app.tufaratv.ui.settings.ParentalControlsScreen
 import app.tufaratv.ui.settings.ProfilesScreen
@@ -203,6 +204,7 @@ object Routes {
     const val PROFILES = "profiles"
     const val PARENTAL = "parental"
     const val SYNC = "sync"
+    const val CATALOGUE = "catalogue"
     const val REC_SETTINGS = "recording-settings"
     const val ABOUT = "about"
     const val SERIES_DETAIL = "series/{seriesId}?tmdbId={tmdbId}&tmdbTitle={tmdbTitle}"
@@ -274,14 +276,19 @@ private fun TufaraTvApp(isTelevision: Boolean) {
         return
     }
 
-    // First run goes straight to setup — an empty channel list with no explanation is the
-    // worst possible first impression.
-    val start = if (sourcesUi.sources.isEmpty()) Routes.ADD_SOURCE else Routes.HOME
+    val bootContext = androidx.compose.ui.platform.LocalContext.current
+    val bootSettings = remember { ServiceLocator.get(bootContext).settings }
+
+    // First run, or a first-run preparation interrupted after credentials were saved, returns to
+    // onboarding. Existing installs default libraryPrepared=true and are never forced through it.
+    val start = if (sourcesUi.sources.isEmpty() || !bootSettings.libraryPrepared) {
+        Routes.ADD_SOURCE
+    } else {
+        Routes.HOME
+    }
 
     // Boot to last channel: if enabled and we have one, jump straight into the player on launch.
     // Runs once; backing out returns to the guide and doesn't re-trigger.
-    val bootContext = androidx.compose.ui.platform.LocalContext.current
-    val bootSettings = remember { ServiceLocator.get(bootContext).settings }
     LaunchedEffect(start) {
         if (start == Routes.HOME && bootSettings.resumeLastChannel.value && bootSettings.lastChannelId != 0L) {
             navController.navigate(Routes.player(bootSettings.lastChannelId))
@@ -357,7 +364,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     isTelevision = isTelevision,
                     hasSources = sourcesUi.sources.isNotEmpty(),
                     isSyncing = sourcesUi.syncing,
-                    onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
+                    onPlayChannel = { channel -> bootSettings.recordRecentChannel(channel.id); navController.navigate(Routes.player(channel.id)) },
                     onOpenMovie = { movie ->
                         navController.navigate(Routes.movieDetail(movie.id))
                     },
@@ -423,7 +430,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
             composable(Routes.SEARCH) {
                 SearchScreen(
-                    onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
+                    onPlayChannel = { channel -> bootSettings.recordRecentChannel(channel.id); navController.navigate(Routes.player(channel.id)) },
                     onOpenTmdbMovie = { item ->
                         navController.navigate(Routes.tmdbMovieDetail(item.tmdbId, item.title, item.year))
                     },
@@ -444,6 +451,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     onOpenDisplay = { navController.navigate(Routes.APP_SETTINGS) },
                     onOpenParental = { navController.navigate(Routes.PARENTAL) },
                     onOpenSync = { navController.navigate(Routes.SYNC) },
+                    onOpenCatalogue = { navController.navigate(Routes.CATALOGUE) },
                     onOpenRecordings = { navController.navigate(Routes.REC_SETTINGS) },
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
@@ -452,6 +460,13 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
             composable(Routes.SYNC) {
                 SyncScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable(Routes.CATALOGUE) {
+                CatalogueSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    viewModel = sourcesViewModel,
+                )
             }
 
             composable(Routes.REC_SETTINGS) {
@@ -618,6 +633,21 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     title = arg("title"),
                     userAgent = arg("ua").ifEmpty { "TufaraTV/0.1 (Android)" },
                     onBack = { navController.popBackStack() },
+                    onNextEpisode = { next ->
+                        navController.navigate(
+                            Routes.vodPlayer(
+                                key = next.mediaKey,
+                                url = next.streamUrl,
+                                title = next.title,
+                                ua = next.userAgent,
+                                contentKey = next.contentKey,
+                                variantsKey = next.variantsKey,
+                            ),
+                        ) {
+                            popUpTo(entry.destination.id) { inclusive = true }
+                            launchSingleTop = true
+                        }
+                    },
                     contentKey = arg("contentKey").ifEmpty { null },
                     // A movie's URL never sets variantsKey (only onPlayEpisode's route does), so an
                     // explicit null here must still fall back to contentKey itself — the parameter's

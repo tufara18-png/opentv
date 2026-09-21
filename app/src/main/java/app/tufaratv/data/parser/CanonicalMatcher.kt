@@ -53,7 +53,6 @@ object CanonicalMatcher {
         val key: Key,
     )
 
-    private val EMBEDDED_YEAR = Regex("""\b(19|20)\d{2}\b""")
 
     /**
      * Normalizes a candidate's raw name into a match key and clean display title. Reuses the same
@@ -63,11 +62,27 @@ object CanonicalMatcher {
      * that the group key deliberately throws away.
      */
     fun keyOf(rawName: String, explicitYear: Int? = null): Key {
-        val embeddedYear = EMBEDDED_YEAR.find(rawName)?.value?.toIntOrNull()
-        val bareName = EMBEDDED_YEAR.replace(rawName, " ")
-        val titleKey = ChannelNameNormalizer.normalize(bareName).groupKey
         val displayTitle = VodTitleCleaner.clean(rawName)
-        return Key(titleKey = titleKey, displayTitle = displayTitle, year = explicitYear ?: embeddedYear)
+        val inferredYear = VodTitleCleaner.inferReleaseYear(rawName)
+        val year = explicitYear ?: inferredYear
+
+        // Strip only the release year we actually inferred. Never remove every 19xx/20xx token:
+        // numbers such as "2001" and "2049" can be part of the work's real title.
+        val yearsToStrip = listOfNotNull(inferredYear, explicitYear).distinct()
+        val titleForKey = yearsToStrip.fold(displayTitle) { title, releaseYear ->
+            title
+                .replace(
+                    Regex("""\s*[\[(]\s*__YEAR__\s*[\])]\s*$""".replace("__YEAR__", releaseYear.toString())),
+                    "",
+                )
+                .replace(
+                    Regex("""\s+__YEAR__\s*$""".replace("__YEAR__", releaseYear.toString())),
+                    "",
+                )
+                .trim()
+        }.ifBlank { displayTitle }
+        val titleKey = ChannelNameNormalizer.normalize(titleForKey).groupKey
+        return Key(titleKey = titleKey, displayTitle = displayTitle, year = year)
     }
 
     /**
@@ -84,11 +99,28 @@ object CanonicalMatcher {
         val key = keyOf(candidate.rawName, candidate.explicitYear)
 
         if (candidate.tmdbId != null) {
-            return if (existingByTmdbId != null) {
-                Decision(Action.LINK_EXISTING, existingByTmdbId.id, CanonicalMatchKind.TMDB, key)
-            } else {
-                Decision(Action.CREATE_NEW, matchKind = CanonicalMatchKind.TMDB, key = key)
+            if (existingByTmdbId != null) {
+                return Decision(Action.LINK_EXISTING, existingByTmdbId.id, CanonicalMatchKind.TMDB, key)
             }
+
+            // A provider can be the first one that finally supplies a real TMDB id for a title
+            // previously linked only by title/year. Promote that existing row instead of creating
+            // a duplicate, but only when the fallback is unambiguous and the old row has no
+            // conflicting TMDB identity of its own.
+            val promotable = existingByTitleKey.filter { existing ->
+                existing.tmdbId == null &&
+                    (key.year == null || existing.year == null || existing.year == key.year)
+            }
+            if (promotable.size == 1) {
+                return Decision(
+                    Action.LINK_EXISTING,
+                    promotable.single().id,
+                    CanonicalMatchKind.TMDB,
+                    key,
+                )
+            }
+
+            return Decision(Action.CREATE_NEW, matchKind = CanonicalMatchKind.TMDB, key = key)
         }
 
         if (key.year != null) {
