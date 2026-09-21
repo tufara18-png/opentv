@@ -1022,6 +1022,18 @@ interface CanonicalEpisodeDao {
     @Query("SELECT * FROM canonical_episodes WHERE id = :id")
     suspend fun byId(id: Long): CanonicalEpisode?
 
+    /** The immediately following canonical episode, crossing season boundaries naturally. */
+    @Query(
+        """
+        SELECT * FROM canonical_episodes
+        WHERE canonicalSeriesId = :canonicalSeriesId
+          AND (season > :season OR (season = :season AND episodeNumber > :episodeNumber))
+        ORDER BY season, episodeNumber
+        LIMIT 1
+        """
+    )
+    suspend fun nextAfter(canonicalSeriesId: Long, season: Int, episodeNumber: Int): CanonicalEpisode?
+
     @Query(
         "SELECT * FROM canonical_episodes WHERE canonicalSeriesId = :canonicalSeriesId " +
             "AND season = :season AND episodeNumber = :episodeNumber LIMIT 1",
