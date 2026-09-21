@@ -1277,13 +1277,15 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
     @Volatile private var vodRequested = false
 
-    /** How long a fetched VOD catalogue is trusted before a warm launch re-syncs it. */
-    private val VOD_TTL_MILLIS = 12L * 60 * 60 * 1000  // 12 hours
-
+    /**
+     * Loads Home from Room first. Once a catalogue exists it is treated as persistent application
+     * state, not a cache with an expiry: opening the app never downloads a 40k-title provider list.
+     * A network fetch happens only for an empty library or an explicit catalogue refresh.
+     */
     fun ensureVodLoaded() {
         if (vodRequested) return
         vodRequested = true
-        viewModelScope.launch { syncVodIfStale(force = false) }
+        viewModelScope.launch { loadVodFromDiskOrBootstrap() }
     }
 
     /**
@@ -1296,28 +1298,29 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { syncVodIfStale(force = true) }
     }
 
-    private suspend fun syncVodIfStale(force: Boolean) {
-        val now = System.currentTimeMillis()
+    private suspend fun loadVodFromDiskOrBootstrap() {
+        val haveCatalogue = runCatching {
+            graph.catalogRepository.movieCount() + graph.catalogRepository.seriesCount()
+        }.getOrDefault(0) > 0
 
-        // Warm-launch fast path. The catalogue is persisted in Room, so once it has been fetched
-        // there is no reason to re-download and re-upsert a 40k-title list on every launch — that
-        // was both the multi-minute "Loading movies & shows…" and the bandwidth hog that starved
-        // the live preview into buffering. When we synced recently and already have rows, skip the
-        // network entirely and just (re)build the home shelves off what is stored.
-        if (!force) {
-            val haveCatalogue = runCatching {
-                graph.catalogRepository.movieCount() + graph.catalogRepository.seriesCount()
-            }.getOrDefault(0) > 0
-            val last = settings.vodSyncedAtMillis
-            val fresh = last > 0 && now - last < VOD_TTL_MILLIS
-            if (haveCatalogue && fresh) {
-                loadHomeFeeds()
-                return
-            }
+        if (haveCatalogue) {
+            loadHomeFeeds()
+            return
         }
 
+        refreshVodNow()
+    }
+
+    /** Explicit full VOD refresh. The Settings > Catalogue screen is the normal entry point. */
+    fun refreshVod() {
+        vodRequested = true
+        viewModelScope.launch { refreshVodNow() }
+    }
+
+    private suspend fun refreshVodNow() {
+        val now = System.currentTimeMillis()
         _vodLoading.value = true
-        val synced = StatusBus.during("Loading movies & shows…") {
+        val synced = StatusBus.during("Updating catalogue…") {
             runCatching {
                 for (source in graph.sourceRepository.enabled()) {
                     graph.catalogRepository.syncVod(source, now)
@@ -1325,10 +1328,7 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             }.isSuccess
         }
         _vodLoading.value = false
-        // Stamp the cache only when the fetch actually succeeded, so a failed sync retries on the
-        // next open instead of being remembered as "fresh" and leaving the user with no catalogue.
         if (synced) settings.vodSyncedAtMillis = now
-        // The catalogue may have grown — recompute the computed home rows off the fresh data.
         loadHomeFeeds()
     }
 
