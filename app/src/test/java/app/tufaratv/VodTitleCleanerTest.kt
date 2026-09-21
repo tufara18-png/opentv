@@ -115,4 +115,20 @@ class VodTitleCleanerTest {
         assertThat(p.codec).isNull()
         assertThat(p.year).isNull()
     }
+    @Test
+    fun `release year inference does not eat years that are part of the title`() {
+        assertThat(VodTitleCleaner.inferReleaseYear("2001: A Space Odyssey (1968)")).isEqualTo(1968)
+        assertThat(VodTitleCleaner.inferReleaseYear("Blade Runner 2049")).isNull()
+        assertThat(VodTitleCleaner.inferReleaseYear("1917")).isNull()
+        assertThat(VodTitleCleaner.inferReleaseYear("The Godfather 1972 HD")).isEqualTo(1972)
+    }
+
+    @Test
+    fun `release year extraction works across common dirty provider forms`() {
+        assertThat(VodTitleCleaner.inferReleaseYear("FR| Oppenheimer (2023) FHD")).isEqualTo(2023)
+        assertThat(VodTitleCleaner.inferReleaseYear("[MULTI] Oppenheimer 2023 4K")).isEqualTo(2023)
+        assertThat(VodTitleCleaner.inferReleaseYear("NF - Dark (2017) (DE)")).isEqualTo(2017)
+    }
+
+
 }
