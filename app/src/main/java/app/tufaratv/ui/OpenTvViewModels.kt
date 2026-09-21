@@ -1432,16 +1432,6 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { loadVodFromDiskOrBootstrap() }
     }
 
-    /**
-     * Force a fresh download of the movies/series catalogue, ignoring the freshness cache. Wired
-     * to the pull-to-refresh / refresh action so the user always has a way to pull new titles in
-     * before the TTL lapses.
-     */
-    fun refreshVod() {
-        vodRequested = true
-        viewModelScope.launch { syncVodIfStale(force = true) }
-    }
-
     private suspend fun loadVodFromDiskOrBootstrap() {
         val haveCatalogue = runCatching {
             graph.catalogRepository.movieCount() + graph.catalogRepository.seriesCount()
