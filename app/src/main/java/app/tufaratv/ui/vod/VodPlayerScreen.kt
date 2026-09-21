@@ -264,6 +264,7 @@ fun VodPlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var interaction by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var nextEpisode by remember(mediaKey) { mutableStateOf<NextEpisodePlayback?>(null) }
+    var autoAdvanced by remember(mediaKey) { mutableStateOf(false) }
     val barFocus = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
 
@@ -355,6 +356,17 @@ fun VodPlayerScreen(
                 // can skip ahead) is what's been read into the buffer.
                 durationMs = if (growingRec) controller.player.bufferedPosition.coerceAtLeast(0)
                 else controller.player.duration.takeIf { it > 0 } ?: 0
+            }
+            // Series should behave like a streaming service: when Media3 reports the episode truly
+            // ended, persist the completed position and replace this route with the next episode.
+            // autoAdvanced makes the 500ms polling loop idempotent while navigation is settling.
+            val next = nextEpisode
+            if (!growingRec && !autoAdvanced && next != null &&
+                controller.player.playbackState == androidx.media3.common.Player.STATE_ENDED
+            ) {
+                autoAdvanced = true
+                savePosition()
+                onNextEpisode(next)
             }
             delay(500)
         }
