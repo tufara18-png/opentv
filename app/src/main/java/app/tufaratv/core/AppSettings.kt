@@ -268,6 +268,35 @@ class AppSettings private constructor(context: Context) {
         set(value) { prefs.edit().putLong(KEY_LAST_CHANNEL, value).apply() }
 
     /**
+     * Recently tuned live channels, newest first. This is deliberately tiny and local: it gives
+     * Home a streaming-service-style "recent live" shelf without introducing another Room table
+     * or making live playback depend on a history write succeeding.
+     */
+    private val _recentChannelIds = MutableStateFlow(readRecentChannelIds())
+    val recentChannelIds: StateFlow<List<Long>> = _recentChannelIds.asStateFlow()
+
+    fun recordRecentChannel(id: Long) {
+        if (id <= 0L) return
+        val updated = buildList {
+            add(id)
+            _recentChannelIds.value.asSequence()
+                .filter { it != id }
+                .take(MAX_RECENT_CHANNELS - 1)
+                .forEach(::add)
+        }
+        prefs.edit().putString(KEY_RECENT_CHANNELS, updated.joinToString(",")).apply()
+        _recentChannelIds.value = updated
+        lastChannelId = id
+    }
+
+    private fun readRecentChannelIds(): List<Long> =
+        prefs.getString(KEY_RECENT_CHANNELS, "").orEmpty()
+            .split(',')
+            .mapNotNull { it.trim().toLongOrNull() }
+            .distinct()
+            .take(MAX_RECENT_CHANNELS)
+
+    /**
      * Video scaling in the player, as an [androidx.media3.ui.AspectRatioFrameLayout] RESIZE_MODE_*
      * constant (0 = Fit). Persisted so the choice survives leaving the player, which testers asked
      * for — picking Fill every single time you open a channel gets old fast.
@@ -504,7 +533,9 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_CONTENT_MOVIES = "content_movies"
         private const val KEY_CONTENT_SERIES = "content_series"
         private const val KEY_LAST_CHANNEL = "last_channel_id"
+        private const val KEY_RECENT_CHANNELS = "recent_channel_ids"
         private const val KEY_RESIZE_MODE = "player_resize_mode"
+        private const val MAX_RECENT_CHANNELS = 12
         private const val KEY_LANGUAGE = "language_tag"
 
         /**
