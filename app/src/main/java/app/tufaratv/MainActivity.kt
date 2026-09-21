@@ -420,18 +420,12 @@ private fun TufaraTvApp(isTelevision: Boolean) {
             composable(Routes.SEARCH) {
                 SearchScreen(
                     onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
-                    onPlayMovie = { movie ->
-                        navController.navigate(
-                            Routes.vodPlayer(
-                                key = "movie:${movie.id}",
-                                url = movie.streamUrl,
-                                title = movie.displayTitle,
-                                ua = "TufaraTV/0.1 (Android)",
-                                contentKey = movie.canonicalId?.let { "movie:$it" }.orEmpty(),
-                            ),
-                        )
+                    onOpenTmdbMovie = { item ->
+                        navController.navigate(Routes.tmdbMovieDetail(item.tmdbId))
                     },
-                    onOpenSeries = { series -> navController.navigate(Routes.seriesDetail(series.id)) },
+                    onOpenTmdbSeries = { item ->
+                        navController.navigate(Routes.tmdbSeriesDetail(item.tmdbId))
+                    },
                     onBack = { navController.popBackStack() },
                 )
             }
