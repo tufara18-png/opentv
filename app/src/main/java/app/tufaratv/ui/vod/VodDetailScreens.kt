@@ -455,11 +455,14 @@ fun SeriesDetailScreen(
         val loaded = viewModel.seriesDetail(seriesId)
         series = loaded
         if (loaded != null) {
-            viewModel.loadEpisodes(loaded)
             // The visible identity is TMDB whenever this series came from the TMDB catalog.
             // Provider metadata remains an availability/episode transport only.
             val resolvedTmdbId = tmdbId?.takeIf { it.isNotBlank() }
                 ?: loaded.tmdbId?.takeIf { it.isNotBlank() }
+            // Same id feeds the episode backfill — a title search ambiguous enough to leave the
+            // per-source row's own tmdbId null (see ensureEpisodes' doc comment) must not also
+            // leave every episode's name/synopsis/still stuck on its placeholder.
+            viewModel.loadEpisodes(loaded, resolvedTmdbId)
             if (resolvedTmdbId != null) {
                 tmdbMeta = viewModel.tmdbDetail(resolvedTmdbId, isMovie = false)
             }

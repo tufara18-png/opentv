@@ -952,8 +952,18 @@ class CatalogRepository(
     suspend fun markSeriesFavouriteBySeriesId(seriesId: String) =
         seriesDao.markFavouriteBySeriesId(seriesId)
 
-    /** Series episodes are fetched lazily — panels are slow and most series are never opened. */
-    suspend fun ensureEpisodes(source: Source, seriesId: String) {
+    /**
+     * Series episodes are fetched lazily — panels are slow and most series are never opened.
+     *
+     * [knownTmdbId], when supplied, is preferred over the per-source [Series.tmdbId] column for
+     * the episode-metadata backfill below. A title like "Homeland" is ambiguous enough (dozens of
+     * unrelated movies/shows share the name) that [CatalogRepository.seriesDetail]'s own title
+     * search can legitimately fail to resolve it and leave that column null, even though the
+     * screen the user is actually looking at already knows the real id — it came straight from a
+     * TMDB browse/search card. Without this, episode names/synopsis/stills silently never
+     * backfill for exactly the ambiguous-title series most likely to need it.
+     */
+    suspend fun ensureEpisodes(source: Source, seriesId: String, knownTmdbId: String? = null) {
         runCatching {
             when (source.kind) {
                 SourceKind.XTREAM -> api.episodes(source, seriesId)
@@ -968,7 +978,8 @@ class CatalogRepository(
                 val seriesRow = seriesDao.bySourceAndSeriesId(source.id, seriesId)
                 val canonicalSeriesId = seriesRow?.canonicalId
                 if (canonicalSeriesId != null) linkEpisodesToCanonical(source.id, seriesId, canonicalSeriesId)
-                backfillEpisodeTmdbMeta(seriesRow?.tmdbId, stamped)
+                val tmdbId = knownTmdbId?.takeIf { it.isNotBlank() } ?: seriesRow?.tmdbId
+                backfillEpisodeTmdbMeta(tmdbId, stamped)
             }
             .onFailure { Log.w(TAG, "Episode fetch failed for series $seriesId", it) }
     }

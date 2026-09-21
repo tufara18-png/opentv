@@ -1557,10 +1557,10 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      * Pulling every episode of every series up front is what makes a first sync take twenty
      * minutes on a large provider, and most of it is never looked at.
      */
-    fun loadEpisodes(series: Series) {
+    fun loadEpisodes(series: Series, knownTmdbId: String? = null) {
         viewModelScope.launch {
             val source = graph.sourceRepository.byId(series.sourceId) ?: return@launch
-            graph.catalogRepository.ensureEpisodes(source, series.seriesId)
+            graph.catalogRepository.ensureEpisodes(source, series.seriesId, knownTmdbId)
         }
     }
 
