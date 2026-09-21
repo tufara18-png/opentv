@@ -244,7 +244,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             update("Organisation des films et séries…", 0.32f)
             runCatching { graph.catalogRepository.syncVod(saved, now) }
                 .onFailure { Log.w("TufaraTV", "Initial VOD preparation failed", it) }
-            settings.vodSyncedAtMillis = now
+            graph.settings.vodSyncedAtMillis = now
 
             update("Construction du guide TV…", 0.78f)
             runCatching { graph.epgRepository.syncAll(now, force = true) }
@@ -298,7 +298,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                 val part = (index + 1).toFloat() / sources.size.coerceAtLeast(1)
                 _ui.value = _ui.value.copy(catalogueProgress = 0.35f + part * 0.45f)
             }
-            settings.vodSyncedAtMillis = now
+            graph.settings.vodSyncedAtMillis = now
 
             _ui.value = _ui.value.copy(
                 catalogueProgress = 0.82f,
