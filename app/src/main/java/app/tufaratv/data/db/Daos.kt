@@ -648,6 +648,12 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun byId(id: Long): Episode?
 
+    /** Every local/provider row behind one canonical episode, best advertised quality first.
+     *  Used by the in-player "Next episode" transition to keep playback inside the player while
+     *  still handing the next episode's complete source ladder to the normal selector. */
+    @Query("SELECT * FROM episodes WHERE canonicalEpisodeId = :canonicalEpisodeId ORDER BY qualityRank DESC")
+    suspend fun byCanonicalEpisodeId(canonicalEpisodeId: Long): List<Episode>
+
     @Query("SELECT * FROM episodes WHERE streamUrl = :url LIMIT 1")
     suspend fun byStreamUrl(url: String): Episode?
 
