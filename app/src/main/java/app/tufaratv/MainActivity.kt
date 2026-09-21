@@ -207,8 +207,8 @@ object Routes {
     const val ABOUT = "about"
     const val SERIES_DETAIL = "series/{seriesId}"
     const val MOVIE_DETAIL = "movie/{movieId}"
-    const val TMDB_MOVIE_DETAIL = "tmdb-movie/{tmdbId}"
-    const val TMDB_SERIES_DETAIL = "tmdb-series/{tmdbId}"
+    const val TMDB_MOVIE_DETAIL = "tmdb-movie/{tmdbId}?title={title}&year={year}"
+    const val TMDB_SERIES_DETAIL = "tmdb-series/{tmdbId}?title={title}&year={year}"
     const val EDIT_SOURCE = "edit-source/{sourceId}"
 
     // A person's name goes in a query arg, URL-encoded, so spaces and punctuation survive the round
@@ -230,8 +230,10 @@ object Routes {
     fun player(channelId: Long) = "player/$channelId"
     fun seriesDetail(seriesId: Long) = "series/$seriesId"
     fun movieDetail(movieId: Long) = "movie/$movieId"
-    fun tmdbMovieDetail(tmdbId: String) = "tmdb-movie/${java.net.URLEncoder.encode(tmdbId, "UTF-8")}"
-    fun tmdbSeriesDetail(tmdbId: String) = "tmdb-series/${java.net.URLEncoder.encode(tmdbId, "UTF-8")}"
+    fun tmdbMovieDetail(tmdbId: String, title: String = "", year: Int? = null) =
+        "tmdb-movie/${java.net.URLEncoder.encode(tmdbId, "UTF-8")}?title=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${year ?: ""}"
+    fun tmdbSeriesDetail(tmdbId: String, title: String = "", year: Int? = null) =
+        "tmdb-series/${java.net.URLEncoder.encode(tmdbId, "UTF-8")}?title=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${year ?: ""}"
     fun editSource(sourceId: Long) = "edit-source/$sourceId"
     fun person(name: String) = "person?name=${java.net.URLEncoder.encode(name, "UTF-8")}"
     fun vodPlayer(
@@ -358,13 +360,13 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                         navController.navigate(Routes.movieDetail(movie.id))
                     },
                     onOpenTmdbMovie = { item ->
-                        navController.navigate(Routes.tmdbMovieDetail(item.tmdbId))
+                        navController.navigate(Routes.tmdbMovieDetail(item.tmdbId, item.title, item.year))
                     },
                     onOpenSeries = { series ->
                         navController.navigate(Routes.seriesDetail(series.id))
                     },
                     onOpenTmdbSeries = { item ->
-                        navController.navigate(Routes.tmdbSeriesDetail(item.tmdbId))
+                        navController.navigate(Routes.tmdbSeriesDetail(item.tmdbId, item.title, item.year))
                     },
                     onResume = { key, url, title ->
                         navController.navigate(
@@ -421,10 +423,10 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                 SearchScreen(
                     onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
                     onOpenTmdbMovie = { item ->
-                        navController.navigate(Routes.tmdbMovieDetail(item.tmdbId))
+                        navController.navigate(Routes.tmdbMovieDetail(item.tmdbId, item.title, item.year))
                     },
                     onOpenTmdbSeries = { item ->
-                        navController.navigate(Routes.tmdbSeriesDetail(item.tmdbId))
+                        navController.navigate(Routes.tmdbSeriesDetail(item.tmdbId, item.title, item.year))
                     },
                     onBack = { navController.popBackStack() },
                 )
@@ -548,8 +550,13 @@ private fun TufaraTvApp(isTelevision: Boolean) {
             composable(Routes.TMDB_MOVIE_DETAIL) { entry ->
                 val tmdbId = entry.arguments?.getString("tmdbId")
                     ?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: return@composable
+                val initialTitle = entry.arguments?.getString("title")
+                    ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+                val initialYear = entry.arguments?.getString("year")?.toIntOrNull()
                 TmdbMovieDetailScreen(
                     tmdbId = tmdbId,
+                    initialTitle = initialTitle,
+                    initialYear = initialYear,
                     viewModel = vodViewModel,
                     onPlay = { contentKey, url, ua, title ->
                         navController.navigate(
@@ -563,8 +570,13 @@ private fun TufaraTvApp(isTelevision: Boolean) {
             composable(Routes.TMDB_SERIES_DETAIL) { entry ->
                 val tmdbId = entry.arguments?.getString("tmdbId")
                     ?.let { java.net.URLDecoder.decode(it, "UTF-8") } ?: return@composable
+                val initialTitle = entry.arguments?.getString("title")
+                    ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+                val initialYear = entry.arguments?.getString("year")?.toIntOrNull()
                 TmdbSeriesDetailScreen(
                     tmdbId = tmdbId,
+                    initialTitle = initialTitle,
+                    initialYear = initialYear,
                     viewModel = vodViewModel,
                     onFoundLocal = { seriesId ->
                         // Replaces itself in the back stack — Back from the real series page
