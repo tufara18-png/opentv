@@ -73,7 +73,7 @@ class StalkerApi(
         var current = element ?: return null
         repeat(4) {
             val obj = current as? JsonObject ?: return current
-            val next = listOf("js", "data", "result", "response")
+            val next = listOf("js", "result", "response")
                 .firstNotNullOfOrNull { key -> obj[key]?.takeUnless { it is JsonPrimitive && it.contentOrNull == "null" } }
                 ?: return current
             current = next
