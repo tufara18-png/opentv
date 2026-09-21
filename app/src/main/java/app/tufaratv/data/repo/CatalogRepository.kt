@@ -1561,39 +1561,80 @@ class CatalogRepository(
             M3uParser.parse(stream, source.id)
         }
 
-        if (parsed.channels.isEmpty()) {
+        if (parsed.channels.isEmpty() && parsed.movies.isEmpty() && parsed.series.isEmpty()) {
             return SyncResult.Failed(
-                "No channels found in that playlist. Check the URL points at an M3U file.",
+                "No playable entries found in that playlist. Check the URL points at an M3U/M3U+ file.",
                 null,
             )
         }
 
-        // Synthesise categories from group-title so the UI has something to group by.
-        val categories = parsed.channels
-            .mapNotNull { it.categoryId }
-            .distinct()
-            .sorted()
-            .mapIndexed { index, name ->
+        fun categoriesOf(kind: StreamKind, ids: List<String?>): List<Category> =
+            ids.mapNotNull { it }.distinct().sorted().mapIndexed { index, name ->
                 Category(
                     id = name,
                     sourceId = source.id,
                     name = name,
-                    kind = StreamKind.LIVE,
+                    kind = kind,
                     sortIndex = index,
                 )
             }
 
-        categoryDao.upsertAll(categories)
-        val categoryNames = categories.associate { it.id to it.name }
-        channelDao.replaceCatalogue(source.id, normalized(parsed.channels, categoryNames), nowUtcMillis)
+        // One m3u_plus download can contain all three libraries. Split them here, then feed the
+        // same Room/canonical pipeline the native Xtream and Stalker adapters use.
+        val liveCategories = categoriesOf(StreamKind.LIVE, parsed.channels.map { it.categoryId })
+        val movieCategories = categoriesOf(StreamKind.MOVIE, parsed.movies.map { it.categoryId })
+        val seriesCategories = categoriesOf(StreamKind.SERIES, parsed.series.map { it.categoryId })
+        val allCategories = buildList {
+            addAll(liveCategories)
+            if (settings.moviesEnabled.value) addAll(movieCategories)
+            if (settings.seriesEnabled.value) addAll(seriesCategories)
+        }
+        if (allCategories.isNotEmpty()) categoryDao.upsertAll(allCategories)
 
-        // If the playlist declared its own guide URL and the user did not set one, adopt it.
+        val liveCategoryNames = liveCategories.associate { it.id to it.name }
+        if (parsed.channels.isNotEmpty()) {
+            channelDao.replaceCatalogue(
+                source.id,
+                normalized(parsed.channels, liveCategoryNames),
+                nowUtcMillis,
+            )
+        }
+
+        val movies = if (settings.moviesEnabled.value) stampedMovieQuality(parsed.movies) else emptyList()
+        if (movies.isNotEmpty()) {
+            movieDao.upsertAll(movies)
+            linkMoviesToCanonical(source.id)
+        }
+
+        val series = if (settings.seriesEnabled.value) stampedSeriesQuality(parsed.series) else emptyList()
+        val episodes = if (settings.seriesEnabled.value) stampedEpisodeQuality(parsed.episodes) else emptyList()
+        if (series.isNotEmpty()) {
+            seriesDao.upsertAll(series)
+            linkSeriesToCanonical(source.id)
+        }
+        if (episodes.isNotEmpty()) {
+            episodeDao.upsertAll(episodes)
+            // The series rows are canonical-linked first. Now every episode can be linked by its
+            // exact season/episode slot, same as Xtream/Stalker lazy episode imports.
+            episodes.groupBy { it.seriesId }.forEach { (seriesId, _) ->
+                val seriesRow = seriesDao.bySourceAndSeriesId(source.id, seriesId)
+                val canonicalSeriesId = seriesRow?.canonicalId
+                if (canonicalSeriesId != null) {
+                    linkEpisodesToCanonical(source.id, seriesId, canonicalSeriesId)
+                }
+            }
+        }
+
         if (source.epgUrl.isNullOrBlank() && !parsed.declaredEpgUrl.isNullOrBlank()) {
             sourceDao.update(source.copy(epgUrl = parsed.declaredEpgUrl))
         }
 
         sourceDao.markCatalogSynced(source.id, nowUtcMillis)
-        return SyncResult.Success(parsed.channels.size, 0, 0)
+        return SyncResult.Success(
+            channelCount = parsed.channels.size,
+            movieCount = movies.size,
+            seriesCount = series.size,
+        )
     }
 
     /**
