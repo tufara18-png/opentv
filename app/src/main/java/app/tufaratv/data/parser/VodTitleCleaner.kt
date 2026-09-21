@@ -275,8 +275,11 @@ object VodTitleCleaner {
         return input.split(' ')
             .filter { part ->
                 val bare = part.trim('.', ',', ':', ';', '|', '-', '(', ')', '[', ']')
-                // Keep punctuation-only tokens (real separators) and anything that isn't a quality tag.
-                bare.isEmpty() || ChannelNameNormalizer.qualityRankOfToken(bare) == null
+                // Keep punctuation-only tokens (real separators) and real title tokens. Quality,
+                // codec and HDR markers are metadata, never part of the canonical display identity.
+                bare.isEmpty() ||
+                    (ChannelNameNormalizer.qualityRankOfToken(bare) == null &&
+                        !ChannelNameNormalizer.isStreamMarker(bare))
             }
             .joinToString(" ")
     }
