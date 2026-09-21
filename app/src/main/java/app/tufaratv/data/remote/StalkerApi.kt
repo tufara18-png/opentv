@@ -292,20 +292,39 @@ class StalkerApi(
      */
     suspend fun seriesEpisodes(source: Source, seriesId: String): List<Episode> = withContext(Dispatchers.IO) {
         val showId = seriesId.substringBefore(':')
-        val js = callRetrying(source, type = "series", action = "get_ordered_list") { b ->
+        val raw = callRetrying(source, type = "series", action = "get_ordered_list") { b ->
             b.addQueryParameter("movie_id", showId)
             b.addQueryParameter("category", "*")
-        } as? JsonObject ?: return@withContext emptyList()
-        val seasons = js["data"] as? JsonArray ?: return@withContext emptyList()
-        seasons.flatMap seasonLoop@{ element ->
+        }
+        val seasons = listPayload(raw)
+
+        seasons.flatMapIndexed seasonLoop@{ index, element ->
             val o = element as? JsonObject ?: return@seasonLoop emptyList()
-            val seasonId = o.str("id") ?: return@seasonLoop emptyList()
-            val seasonNum = seasonId.substringAfter(':').toIntOrNull() ?: return@seasonLoop emptyList()
-            val cmd = o.str("cmd")?.takeIf { it.isNotBlank() } ?: return@seasonLoop emptyList()
-            val episodeNumbers = (o["series"] as? JsonArray)
-                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }
-                .orEmpty()
-            episodeNumbers.map { epNum ->
+            val seasonId = o.firstString("id", "season_id", "season")
+            val seasonNum = o.firstString("season", "season_number", "number")?.toIntOrNull()
+                ?: seasonId?.substringAfterLast(':')?.toIntOrNull()
+                ?: (index + 1)
+
+            val cmd = o.firstString("cmd", "command", "stream_cmd")
+                ?.takeIf { it.isNotBlank() } ?: return@seasonLoop emptyList()
+
+            val episodeNode = o["series"] ?: o["episodes"] ?: o["episode_numbers"]
+            val episodeNumbers = when (episodeNode) {
+                is JsonArray -> episodeNode.mapNotNull { item ->
+                    when (item) {
+                        is JsonPrimitive -> item.contentOrNull?.toIntOrNull()
+                        is JsonObject -> item.firstString("episode", "episode_num", "number", "id")?.toIntOrNull()
+                        else -> null
+                    }
+                }
+                is JsonPrimitive -> episodeNode.contentOrNull
+                    ?.split(',', ';', ' ')
+                    ?.mapNotNull { it.trim().toIntOrNull() }
+                    .orEmpty()
+                else -> emptyList()
+            }
+
+            episodeNumbers.distinct().map { epNum ->
                 Episode(
                     sourceId = source.id,
                     seriesId = seriesId,
@@ -316,7 +335,6 @@ class StalkerApi(
                     plot = null,
                     durationSeconds = null,
                     stillUrl = null,
-                    // Never played directly — see liveChannels'/vodMovies' identical marker.
                     streamUrl = "stalker://${source.id}/series/$showId/$seasonNum/$epNum",
                     cmd = "$cmd|$epNum",
                 )
