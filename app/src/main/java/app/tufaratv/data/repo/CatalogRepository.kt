@@ -1223,7 +1223,15 @@ class CatalogRepository(
      *  [CanonicalContent.alsoKnownAs] if it differs from the canonical title — see [CanonicalMatcher]. */
     private suspend fun mergeIntoExistingMovie(existing: CanonicalContent, decision: CanonicalMatcher.Decision, movie: Movie) {
         val updated = existing.copy(
+            tmdbId = existing.tmdbId ?: movie.tmdbId.takeIf { decision.matchKind == CanonicalMatchKind.TMDB },
             year = existing.year ?: decision.key.year,
+            posterUrl = existing.posterUrl ?: movie.posterUrl,
+            backdropUrl = existing.backdropUrl ?: movie.backdropUrl,
+            plot = existing.plot ?: movie.plot,
+            rating = existing.rating ?: movie.rating,
+            genre = existing.genre ?: movie.genre,
+            cast = existing.cast ?: movie.cast,
+            director = existing.director ?: movie.director,
             alsoKnownAs = mergeAlsoKnownAs(existing.alsoKnownAs, existing.title, decision.key.displayTitle),
         )
         if (updated != existing) canonicalMovieDao.update(updated)
@@ -1231,7 +1239,14 @@ class CatalogRepository(
 
     private suspend fun mergeIntoExistingSeries(existing: CanonicalContent, decision: CanonicalMatcher.Decision, series: Series) {
         val updated = existing.copy(
+            tmdbId = existing.tmdbId ?: series.tmdbId.takeIf { decision.matchKind == CanonicalMatchKind.TMDB },
             year = existing.year ?: decision.key.year,
+            posterUrl = existing.posterUrl ?: series.posterUrl,
+            backdropUrl = existing.backdropUrl ?: series.backdropUrl,
+            plot = existing.plot ?: series.plot,
+            rating = existing.rating ?: series.rating,
+            genre = existing.genre ?: series.genre,
+            cast = existing.cast ?: series.cast,
             alsoKnownAs = mergeAlsoKnownAs(existing.alsoKnownAs, existing.title, decision.key.displayTitle),
         )
         if (updated != existing) canonicalSeriesDao.update(updated)
