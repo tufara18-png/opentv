@@ -51,6 +51,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
@@ -970,6 +971,48 @@ class EpgViewModel(app: Application) : AndroidViewModel(app) {
             )
         }
     }
+}
+
+class StreamingHomeViewModel(app: Application) : AndroidViewModel(app) {
+    private val graph = ServiceLocator.get(app)
+    private val settings = graph.settings
+
+    data class RecentLiveItem(
+        val channel: Channel,
+        val now: Programme?,
+        val next: Programme?,
+    )
+
+    private val liveWindow = flow {
+        while (true) {
+            emit(System.currentTimeMillis())
+            delay(30_000L)
+        }
+    }.flatMapLatest { now ->
+        graph.epgRepository.observeWindow(now, now + 4 * 60 * 60_000L)
+            .map { programmes -> now to programmes }
+    }
+
+    val recentLive: StateFlow<List<RecentLiveItem>> =
+        combine(settings.recentChannelIds, liveWindow) { ids, window -> ids to window }
+            .mapLatest { (ids, window) ->
+                val (nowMillis, programmes) = window
+                ids.mapNotNull { id ->
+                    val channel = graph.catalogRepository.channel(id) ?: return@mapNotNull null
+                    val candidates = channel.epgCandidates
+                    val matching = programmes
+                        .asSequence()
+                        .filter { it.epgChannelId in candidates }
+                        .sortedBy { it.startUtcMillis }
+                        .toList()
+                    RecentLiveItem(
+                        channel = channel,
+                        now = matching.firstOrNull { it.isLiveAt(nowMillis) },
+                        next = matching.firstOrNull { it.startUtcMillis >= nowMillis },
+                    )
+                }
+            }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }
 
 class VodViewModel(app: Application) : AndroidViewModel(app) {
