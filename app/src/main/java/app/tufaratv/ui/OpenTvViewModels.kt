@@ -283,6 +283,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             )
             val now = System.currentTimeMillis()
             var failed = false
+            graph.settings.clearTmdbBrowseCache()
             val sources = graph.sourceRepository.enabled()
 
             for ((index, source) in sources.withIndex()) {
