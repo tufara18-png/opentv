@@ -18,6 +18,7 @@ import okhttp3.HttpUrl
 import okhttp3.HttpUrl.Companion.toHttpUrl
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import java.text.Normalizer
 import java.util.Locale
 
 /**
@@ -126,22 +127,88 @@ class TmdbClient(
             .getOrNull()
     }
 
-    /** Finds the best-matching TMDB id, retrying without the year filter if a year search comes back empty. */
+    /**
+     * Resolves a title against TMDB without ever trusting "result #1" blindly.
+     *
+     * IPTV playlists are noisy: language/service prefixes, remakes with the same name, incorrect
+     * years and translated titles are routine. Search therefore fetches a candidate set and scores
+     * every candidate against both TMDB's localized and original title. A weak/ambiguous result is
+     * deliberately left unmatched instead of poisoning the canonical catalogue with confident-looking
+     * wrong artwork. A provider-supplied TMDB id still bypasses this path entirely.
+     */
     private fun searchId(isMovie: Boolean, query: String, year: Int?, key: String): String? {
-        fun run(withYear: Boolean): String? {
-            val b = TMDB_BASE.newBuilder()
-                .addPathSegment("search")
-                .addPathSegment(if (isMovie) "movie" else "tv")
-                .addQueryParameter("api_key", key)
-                .addQueryParameter("query", query)
-                .addQueryParameter("include_adult", "false")
-            if (withYear && year != null) {
-                b.addQueryParameter(if (isMovie) "year" else "first_air_date_year", year.toString())
+        val b = TMDB_BASE.newBuilder()
+            .addPathSegment("search")
+            .addPathSegment(if (isMovie) "movie" else "tv")
+            .addQueryParameter("api_key", key)
+            .addQueryParameter("query", query)
+            .addQueryParameter("include_adult", "false")
+            .addQueryParameter("language", uiLanguage())
+
+        val results = get(b.build())?.jsonObject?.get("results")?.jsonArray ?: return null
+        val wanted = matchKey(query)
+        if (wanted.isBlank()) return null
+
+        data class Candidate(val id: String, val score: Double)
+
+        val ranked = results.take(12).mapNotNull { element ->
+            val o = element.jsonObject
+            val id = o["id"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
+            val localized = (o["title"] ?: o["name"])?.jsonPrimitive?.contentOrNull.orEmpty()
+            val original = (o["original_title"] ?: o["original_name"])?.jsonPrimitive?.contentOrNull.orEmpty()
+            val date = (o["release_date"] ?: o["first_air_date"])?.jsonPrimitive?.contentOrNull
+            val candidateYear = date?.take(4)?.toIntOrNull()
+            val popularity = o["popularity"]?.jsonPrimitive?.doubleOrNull ?: 0.0
+
+            val titleSimilarity = maxOf(
+                titleSimilarity(wanted, matchKey(localized)),
+                titleSimilarity(wanted, matchKey(original)),
+            )
+            var score = titleSimilarity * 70.0
+
+            if (year != null && candidateYear != null) {
+                score += when (kotlin.math.abs(year - candidateYear)) {
+                    0 -> 25.0
+                    1 -> 10.0
+                    else -> -25.0
+                }
+            } else if (year != null) {
+                score -= 4.0
             }
-            val results = get(b.build())?.jsonObject?.get("results")?.jsonArray ?: return null
-            return results.firstOrNull()?.jsonObject?.get("id")?.jsonPrimitive?.contentOrNull
+
+            // Popularity only breaks close ties. It must never overpower identity.
+            score += (kotlin.math.ln(popularity + 1.0) / 3.0).coerceAtMost(5.0)
+            Candidate(id, score)
+        }.sortedByDescending { it.score }
+
+        val best = ranked.firstOrNull() ?: return null
+        val second = ranked.getOrNull(1)
+        val minimum = if (year != null) 67.0 else 76.0
+        val ambiguous = second != null && best.score - second.score < 4.0 && best.score < 92.0
+        return best.id.takeIf { best.score >= minimum && !ambiguous }
+    }
+
+    private fun matchKey(raw: String): String =
+        Normalizer.normalize(raw, Normalizer.Form.NFD)
+            .replace(Regex("""\p{Mn}+"""), "")
+            .lowercase(Locale.ROOT)
+            .replace(Regex("""[^a-z0-9]+"""), " ")
+            .trim()
+            .replace(Regex("""\s+"""), " ")
+
+    /** Blend token overlap with prefix-aware character similarity; exact matches remain 1.0. */
+    private fun titleSimilarity(a: String, b: String): Double {
+        if (a.isBlank() || b.isBlank()) return 0.0
+        if (a == b) return 1.0
+        val at = a.split(' ').filter { it.isNotBlank() }.toSet()
+        val bt = b.split(' ').filter { it.isNotBlank() }.toSet()
+        val union = (at union bt).size.coerceAtLeast(1)
+        val jaccard = (at intersect bt).size.toDouble() / union
+        val prefix = when {
+            a.startsWith(b) || b.startsWith(a) -> 0.88
+            else -> 0.0
         }
-        return run(withYear = year != null) ?: if (year != null) run(withYear = false) else null
+        return maxOf(jaccard, prefix)
     }
 
     private fun details(isMovie: Boolean, id: String, key: String): TmdbMeta? {
@@ -270,6 +337,21 @@ class TmdbClient(
             val name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             TmdbGenre(id, name)
         }
+    }
+
+    /** TMDB's own related-title graph. Local availability is resolved separately by the repository. */
+    fun recommendations(tmdbId: String, isMovie: Boolean, page: Int = 1): List<TmdbListItem> {
+        val key = settings.tmdbApiKey.value.trim()
+        if (key.isEmpty() || tmdbId.isBlank()) return emptyList()
+        val url = TMDB_BASE.newBuilder()
+            .addPathSegment(if (isMovie) "movie" else "tv")
+            .addPathSegment(tmdbId)
+            .addPathSegment("recommendations")
+            .addQueryParameter("api_key", key)
+            .addQueryParameter("page", page.toString())
+            .addQueryParameter("language", uiLanguage())
+            .build()
+        return parseListResults(get(url), isMovie)
     }
 
     /** A title search against TMDB directly — the catalog's own search, not a provider's. */
