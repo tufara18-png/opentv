@@ -272,14 +272,19 @@ private fun TufaraTvApp(isTelevision: Boolean) {
         return
     }
 
-    // First run goes straight to setup — an empty channel list with no explanation is the
-    // worst possible first impression.
-    val start = if (sourcesUi.sources.isEmpty()) Routes.ADD_SOURCE else Routes.HOME
+    val bootContext = androidx.compose.ui.platform.LocalContext.current
+    val bootSettings = remember { ServiceLocator.get(bootContext).settings }
+
+    // First run, or a first-run preparation interrupted after credentials were saved, returns to
+    // onboarding. Existing installs default libraryPrepared=true and are never forced through it.
+    val start = if (sourcesUi.sources.isEmpty() || !bootSettings.libraryPrepared) {
+        Routes.ADD_SOURCE
+    } else {
+        Routes.HOME
+    }
 
     // Boot to last channel: if enabled and we have one, jump straight into the player on launch.
     // Runs once; backing out returns to the guide and doesn't re-trigger.
-    val bootContext = androidx.compose.ui.platform.LocalContext.current
-    val bootSettings = remember { ServiceLocator.get(bootContext).settings }
     LaunchedEffect(start) {
         if (start == Routes.HOME && bootSettings.resumeLastChannel.value && bootSettings.lastChannelId != 0L) {
             navController.navigate(Routes.player(bootSettings.lastChannelId))
