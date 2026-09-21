@@ -645,6 +645,15 @@ interface EpisodeDao {
     @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber")
     fun observeForSeries(sourceId: Long, seriesId: String): Flow<List<Episode>>
 
+    /** One-shot equivalent of [observeForSeries] — for a caller that needs the just-persisted rows
+     *  (with their real, DB-assigned ids) back in hand rather than a stream. See
+     *  [app.tufaratv.data.repo.CatalogRepository.ensureEpisodes] for why that distinction matters:
+     *  a freshly-parsed [Episode] is always `id = 0` until read back from Room, and [upsertAll]'s
+     *  conflict fallback matches an existing row by that id — passing the never-read-back list
+     *  straight through would silently update nothing on every call after the first. */
+    @Query("SELECT * FROM episodes WHERE sourceId = :sourceId AND seriesId = :seriesId ORDER BY season, episodeNumber")
+    suspend fun forSeries(sourceId: Long, seriesId: String): List<Episode>
+
     @Query("SELECT * FROM episodes WHERE id = :id")
     suspend fun byId(id: Long): Episode?
 

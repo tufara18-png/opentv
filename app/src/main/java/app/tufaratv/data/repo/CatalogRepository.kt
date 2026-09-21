@@ -979,7 +979,12 @@ class CatalogRepository(
                 val canonicalSeriesId = seriesRow?.canonicalId
                 if (canonicalSeriesId != null) linkEpisodesToCanonical(source.id, seriesId, canonicalSeriesId)
                 val tmdbId = knownTmdbId?.takeIf { it.isNotBlank() } ?: seriesRow?.tmdbId
-                backfillEpisodeTmdbMeta(tmdbId, stamped)
+                // Re-read rather than reusing `stamped`: those objects are always id=0 (freshly
+                // parsed, never round-tripped through Room), and upsertAll's conflict fallback can
+                // only match an existing row by id — handing it id=0 rows a second time here would
+                // silently update nothing every single time this runs. See EpisodeDao.forSeries.
+                val persisted = episodeDao.forSeries(source.id, seriesId)
+                backfillEpisodeTmdbMeta(tmdbId, persisted)
             }
             .onFailure { Log.w(TAG, "Episode fetch failed for series $seriesId", it) }
     }
