@@ -84,8 +84,10 @@ class M3uParserTest {
 
         val result = M3uParser.parse(playlist, sourceId = 1)
 
-        assertThat(result.channels).hasSize(1)
-        assertThat(result.channels.single().name).isEqualTo("Channel SD")
+        assertThat(result.channels).hasSize(2)
+        assertThat(result.channels.map { it.name }).containsExactly("Channel SD", "Channel HD").inOrder()
+        assertThat(result.channels.map { it.epgChannelId }).containsExactly("dup", "dup")
+        assertThat(result.channels.map { it.streamId }.distinct()).hasSize(2)
     }
 
     @Test
