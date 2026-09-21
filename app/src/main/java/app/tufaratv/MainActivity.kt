@@ -66,6 +66,7 @@ import app.tufaratv.ui.onboarding.AddSourceScreen
 import app.tufaratv.ui.player.PlayerScreen
 import app.tufaratv.ui.settings.AboutScreen
 import app.tufaratv.ui.settings.AppSettingsScreen
+import app.tufaratv.ui.settings.CatalogueSettingsScreen
 import app.tufaratv.ui.settings.EpgSettingsScreen
 import app.tufaratv.ui.settings.ParentalControlsScreen
 import app.tufaratv.ui.settings.ProfilesScreen
@@ -203,6 +204,7 @@ object Routes {
     const val PROFILES = "profiles"
     const val PARENTAL = "parental"
     const val SYNC = "sync"
+    const val CATALOGUE = "catalogue"
     const val REC_SETTINGS = "recording-settings"
     const val ABOUT = "about"
     const val SERIES_DETAIL = "series/{seriesId}"
@@ -446,6 +448,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     onOpenDisplay = { navController.navigate(Routes.APP_SETTINGS) },
                     onOpenParental = { navController.navigate(Routes.PARENTAL) },
                     onOpenSync = { navController.navigate(Routes.SYNC) },
+                    onOpenCatalogue = { navController.navigate(Routes.CATALOGUE) },
                     onOpenRecordings = { navController.navigate(Routes.REC_SETTINGS) },
                     onOpenAbout = { navController.navigate(Routes.ABOUT) },
                     onBack = { navController.popBackStack() },
@@ -454,6 +457,13 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
             composable(Routes.SYNC) {
                 SyncScreen(onBack = { navController.popBackStack() })
+            }
+
+            composable(Routes.CATALOGUE) {
+                CatalogueSettingsScreen(
+                    onBack = { navController.popBackStack() },
+                    viewModel = sourcesViewModel,
+                )
             }
 
             composable(Routes.REC_SETTINGS) {
