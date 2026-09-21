@@ -1,5 +1,9 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+    <string name="nav_home">Home</string>
+    <string name="home_recent_live">Recently watched live</string>
+    <string name="home_trending_movies">Trending movies</string>
+    <string name="home_trending_series">Trending series</string>
     <string name="app_name">TufaraTV</string>
 
     <!-- ============================ Common / reused ============================ -->
