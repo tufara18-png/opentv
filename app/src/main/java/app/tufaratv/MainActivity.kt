@@ -353,7 +353,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     isTelevision = isTelevision,
                     hasSources = sourcesUi.sources.isNotEmpty(),
                     isSyncing = sourcesUi.syncing,
-                    onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
+                    onPlayChannel = { channel -> bootSettings.recordRecentChannel(channel.id); navController.navigate(Routes.player(channel.id)) },
                     onOpenMovie = { movie ->
                         navController.navigate(Routes.movieDetail(movie.id))
                     },
@@ -419,7 +419,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
             composable(Routes.SEARCH) {
                 SearchScreen(
-                    onPlayChannel = { channel -> navController.navigate(Routes.player(channel.id)) },
+                    onPlayChannel = { channel -> bootSettings.recordRecentChannel(channel.id); navController.navigate(Routes.player(channel.id)) },
                     onPlayMovie = { movie ->
                         navController.navigate(
                             Routes.vodPlayer(
