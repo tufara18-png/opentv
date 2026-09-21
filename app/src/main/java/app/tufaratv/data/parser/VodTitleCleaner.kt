@@ -100,7 +100,7 @@ object VodTitleCleaner {
      * are deliberate: a trailing release year is digits (`(2026)`) and never matches, so it survives.
      */
     private val TRAILING_CODE_PAREN = Regex("""\s*[\[(]\s*([A-Za-z]{2,10})\s*[\])]\s*$""")
-    private val YEAR_LANGUAGE_PAREN = Regex("""([\[(]\s*(?:19|20)\d{2})\s+([A-Za-z]{2,10})\s*([\])])""")
+    private val YEAR_LANGUAGE_PAREN = Regex("""[\[(]\s*((?:19|20)\d{2})\s+([A-Za-z]{2,10})\s*[\])]""")
 
     private val MULTI_SPACE = Regex("""\s+""")
 
@@ -296,14 +296,9 @@ object VodTitleCleaner {
     /** "(2026 MULTI)" -> "(2026)" without touching real parenthetical title text. */
     private fun stripYearLanguageMetadata(input: String): String =
         YEAR_LANGUAGE_PAREN.replace(input) { match ->
+            val year = match.groupValues[1]
             val language = match.groupValues[2].uppercase()
-            if (language in LANG_CODES) {
-                val openingAndYear = match.groupValues[1]
-                val closing = match.groupValues[3]
-                openingAndYear + closing
-            } else {
-                match.value
-            }
+            if (language in LANG_CODES) "($year)" else match.value
         }
 
     private fun stripTrailingCodes(input: String): String {
