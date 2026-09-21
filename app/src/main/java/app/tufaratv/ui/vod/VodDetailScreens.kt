@@ -439,6 +439,7 @@ fun TmdbSeriesDetailScreen(
 fun SeriesDetailScreen(
     seriesId: Long,
     tmdbId: String? = null,
+    initialTmdbTitle: String = "",
     onPlayEpisode: (mediaKey: String, url: String, title: String, contentKey: String?, variantsKey: String?) -> Unit,
     onOpenSeries: (Series) -> Unit,
     onOpenPerson: (String) -> Unit,
@@ -462,7 +463,9 @@ fun SeriesDetailScreen(
             if (resolvedTmdbId != null) {
                 tmdbMeta = viewModel.tmdbDetail(resolvedTmdbId, isMovie = false)
             }
-            moreLike = viewModel.moreLikeThisSeries(loaded)
+            // A TMDB-opened show must never expose provider-titled recommendations. Until a
+            // TMDB recommendations rail exists, omit the local-provider "More like this" row.
+            moreLike = if (tmdbId.isNullOrBlank()) viewModel.moreLikeThisSeries(loaded) else emptyList()
         }
     }
 
@@ -487,9 +490,11 @@ fun SeriesDetailScreen(
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
-            val visibleTitle = tmdbMeta?.title?.takeIf { it.isNotBlank() } ?: s.displayTitle
-            val visibleBackdrop = tmdbMeta?.backdropUrl ?: s.backdropUrl
-            val visiblePoster = tmdbMeta?.posterUrl ?: s.posterUrl
+            val visibleTitle = tmdbMeta?.title?.takeIf { it.isNotBlank() }
+                ?: initialTmdbTitle.takeIf { it.isNotBlank() }
+                ?: if (tmdbId.isNullOrBlank()) s.displayTitle else ""
+            val visibleBackdrop = tmdbMeta?.backdropUrl ?: if (tmdbId.isNullOrBlank()) s.backdropUrl else null
+            val visiblePoster = tmdbMeta?.posterUrl ?: if (tmdbId.isNullOrBlank()) s.posterUrl else null
             val visibleMeta = tmdbMeta?.let { meta ->
                 listOfNotNull(
                     meta.year?.toString(),
