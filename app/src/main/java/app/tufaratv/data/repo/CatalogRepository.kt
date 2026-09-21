@@ -728,8 +728,13 @@ class CatalogRepository(
 
     /** Series episodes are fetched lazily — panels are slow and most series are never opened. */
     suspend fun ensureEpisodes(source: Source, seriesId: String) {
-        if (source.kind != SourceKind.XTREAM) return
-        runCatching { api.episodes(source, seriesId) }
+        runCatching {
+            when (source.kind) {
+                SourceKind.XTREAM -> api.episodes(source, seriesId)
+                SourceKind.STALKER -> stalkerApi.seriesEpisodes(source, seriesId)
+                SourceKind.M3U -> emptyList()
+            }
+        }
             .onSuccess { episodes ->
                 if (episodes.isEmpty()) return@onSuccess
                 val stamped = stampedEpisodeQuality(episodes)
@@ -1196,35 +1201,73 @@ class CatalogRepository(
     }
 
     /**
-     * Stalker/Ministra VOD sync — movies only for now. Series needs its own pass: a Stalker
-     * portal's `series` catalogue entries are typically per-season, not per-title, and playing an
-     * episode needs its own `cmd` resolution step that hasn't been verified against a real portal
-     * yet; shipping that half-built would show a series as "available" with nothing playable in
-     * it, worse than not listing it. Movies have no such structure — one `cmd` per title, resolved
-     * at play time by [resolveVariantPlaybackUrl] exactly like a Stalker live channel.
+     * Stalker/Ministra VOD sync — movies, and series as top-level catalogue entries (episodes
+     * fetched separately and lazily by [ensureEpisodes] once a series is opened). Movies/series
+     * are upserted in small batches as [StalkerApi.vodMovies]/[StalkerApi.seriesList] stream them
+     * page by page, not collected into one big in-memory list first — confirmed necessary against
+     * a real 33,802-movie catalogue that ran the app out of memory and crashed it mid-sync when
+     * this held everything at once (see those functions' own doc comments). The canonical-linking
+     * pass still runs once at the end, after every batch has landed.
      */
     private suspend fun syncStalkerVod(source: Source) {
-        if (!settings.moviesEnabled.value) return
-        val movieCategories = runCatching { stalkerApi.vodCategories(source) }.getOrDefault(emptyList())
-        val movies = runCatching { stalkerApi.vodMovies(source) }.getOrDefault(emptyList())
-        if (movieCategories.isNotEmpty()) categoryDao.upsertAll(movieCategories)
-        if (movies.isNotEmpty()) {
-            movieDao.upsertAll(stampedMovieQuality(movies))
-            linkMoviesToCanonical(source.id)
+        val moviesOn = settings.moviesEnabled.value
+        val seriesOn = settings.seriesEnabled.value
+        if (!moviesOn && !seriesOn) return
+
+        if (moviesOn) {
+            val movieCategories = runCatching { stalkerApi.vodCategories(source) }.getOrDefault(emptyList())
+            if (movieCategories.isNotEmpty()) categoryDao.upsertAll(movieCategories)
         }
+        if (seriesOn) {
+            val seriesCategories = runCatching { stalkerApi.seriesCategories(source) }.getOrDefault(emptyList())
+            if (seriesCategories.isNotEmpty()) categoryDao.upsertAll(seriesCategories)
+        }
+
+        var sawMovies = false
+        if (moviesOn) {
+            runCatching {
+                stalkerApi.vodMovies(source) { batch ->
+                    sawMovies = true
+                    movieDao.upsertAll(stampedMovieQuality(batch))
+                }
+            }.onFailure { Log.w(TAG, "Stalker movie sync failed for source ${source.id}", it) }
+        }
+        if (sawMovies) linkMoviesToCanonical(source.id)
+
+        var sawSeries = false
+        if (seriesOn) {
+            runCatching {
+                stalkerApi.seriesList(source) { batch ->
+                    sawSeries = true
+                    seriesDao.upsertAll(stampedSeriesQuality(batch))
+                }
+            }.onFailure { Log.w(TAG, "Stalker series sync failed for source ${source.id}", it) }
+        }
+        if (sawSeries) linkSeriesToCanonical(source.id)
     }
 
     /**
      * The URL to actually feed the player for a [SourceVariant] — the VOD analogue of
-     * [resolvePlaybackUrl]. A Stalker movie's [SourceVariant.cmd] is short-lived, same reasoning
-     * as a Stalker channel, so it's resolved now, at play time, not when the variant list was
-     * built. Xtream/M3U variants carry no `cmd` and just return their already-playable
-     * [SourceVariant.streamUrl] unchanged.
+     * [resolvePlaybackUrl]. A Stalker movie/episode's [SourceVariant.cmd] is short-lived, same
+     * reasoning as a Stalker channel, so it's resolved now, at play time, not when the variant
+     * list was built. Xtream/M3U variants carry no `cmd` and just return their already-playable
+     * [SourceVariant.streamUrl] unchanged. An episode's cmd carries an extra `|<episodeNumber>`
+     * suffix (see [StalkerApi.seriesEpisodes]) that a movie's never does — base64 never contains
+     * `|`, so splitting on it can't misfire on a real movie cmd.
      */
     suspend fun resolveVariantPlaybackUrl(variant: SourceVariant): String {
         val cmd = variant.cmd?.takeIf { it.isNotBlank() } ?: return variant.streamUrl
         val source = sourceDao.byId(variant.sourceId) ?: return variant.streamUrl
-        return runCatching { stalkerApi.createLink(source, cmd, type = "vod") }.getOrNull() ?: variant.streamUrl
+        val delimiter = cmd.lastIndexOf('|')
+        return runCatching {
+            if (delimiter > 0) {
+                val seasonCmd = cmd.substring(0, delimiter)
+                val episodeNum = cmd.substring(delimiter + 1).toIntOrNull()
+                stalkerApi.createLink(source, seasonCmd, type = "vod", seriesEpisode = episodeNum)
+            } else {
+                stalkerApi.createLink(source, cmd, type = "vod")
+            }
+        }.getOrNull() ?: variant.streamUrl
     }
 
     /**

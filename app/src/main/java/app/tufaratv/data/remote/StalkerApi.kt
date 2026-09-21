@@ -8,7 +8,9 @@ package app.tufaratv.data.remote
 import android.util.Log
 import app.tufaratv.data.model.Category
 import app.tufaratv.data.model.Channel
+import app.tufaratv.data.model.Episode
 import app.tufaratv.data.model.Movie
+import app.tufaratv.data.model.Series
 import app.tufaratv.data.model.Source
 import app.tufaratv.data.model.StreamKind
 import kotlinx.coroutines.Dispatchers
@@ -115,14 +117,18 @@ class StalkerApi(
     }
 
     /** Mint the real, short-lived stream URL for a channel's [cmd]. Null if the portal declines.
-     *  [type] is `"itv"` for a live channel, `"vod"` for a movie — a VOD source resolved as itv
-     *  (or vice versa) is a common reason a portal silently declines. */
-    suspend fun createLink(source: Source, cmd: String, type: String = "itv"): String? =
+     *  [type] is `"itv"` for a live channel, `"vod"` for a movie (and, confirmed against a real
+     *  portal, for a series episode too — see [seriesEpisodes]) — a VOD source resolved as itv
+     *  (or vice versa) is a common reason a portal silently declines. [seriesEpisode], when set,
+     *  is the extra `series=<N>` parameter that picks one specific episode out of a season-level
+     *  `cmd` template — a season's `cmd` alone resolves nothing playable on its own. */
+    suspend fun createLink(source: Source, cmd: String, type: String = "itv", seriesEpisode: Int? = null): String? =
         withContext(Dispatchers.IO) {
             val js = callRetrying(source, type = type, action = "create_link") { b ->
                 b.addQueryParameter("cmd", cmd)
                 b.addQueryParameter("forced_storage", "0")
                 b.addQueryParameter("disable_ad", "0")
+                if (seriesEpisode != null) b.addQueryParameter("series", seriesEpisode.toString())
             }
             val linkCmd = (js as? JsonObject)?.str("cmd") ?: return@withContext null
             stripCmdPrefix(linkCmd)
@@ -144,74 +150,198 @@ class StalkerApi(
      * (`category=*` is the Ministra convention for "every category in one paginated sweep",
      * avoiding one round trip per category). Each item's `cmd` is stored, not resolved here —
      * [createLink] mints the real URL at play time, same reasoning as [liveChannels].
+     *
+     * Streamed via [onBatch] (called once per fetched page, ~14 movies at a time) rather than
+     * building one `List<Movie>` for the whole catalogue — confirmed necessary against a real
+     * 33,802-movie catalogue, where holding every page's parsed JSON and every mapped `Movie` in
+     * memory at once ran the app out of heap and crashed it mid-sync (visible in logcat as
+     * repeated blocking GCs then a plain process death, not any kind of matching bug — series,
+     * synced right after movies in [app.tufaratv.data.repo.CatalogRepository.syncStalkerVod],
+     * simply never got a chance to run). A batch is garbage-collectable the moment its caller is
+     * done with it.
      */
-    suspend fun vodMovies(source: Source): List<Movie> = withContext(Dispatchers.IO) {
+    suspend fun vodMovies(source: Source, onBatch: suspend (List<Movie>) -> Unit) = withContext(Dispatchers.IO) {
         val s = session(source)
-        fetchAllPages(source, type = "vod").mapNotNull { element ->
-            val o = element as? JsonObject ?: return@mapNotNull null
-            val id = o.str("id") ?: return@mapNotNull null
-            val name = o.str("name") ?: return@mapNotNull null
-            val cmd = o.str("cmd") ?: return@mapNotNull null
-            Movie(
-                sourceId = source.id,
-                streamId = id,
-                name = name,
-                categoryId = o.str("category_id"),
-                posterUrl = o.str("screenshot_uri")?.takeIf { it.isNotBlank() }
-                    ?.let { absoluteLogo(s.endpoint, it) },
-                rating = o.str("rating_imdb")?.toDoubleOrNull() ?: o.str("rating")?.toDoubleOrNull(),
-                year = o.str("year")?.toIntOrNull(),
-                plot = o.str("description"),
-                durationSeconds = o.str("time")?.toIntOrNull(),
-                containerExtension = null,
-                // Never played directly — see [liveChannels]'s identical marker for channels.
-                streamUrl = "stalker://${source.id}/vod/$id",
-                cast = o.str("actors"),
-                genre = o.str("genres_str"),
-                director = o.str("director"),
-                cmd = cmd,
-            )
+        fetchAllPagesStreaming(source, type = "vod") { batch ->
+            val movies = batch.mapNotNull { element ->
+                val o = element as? JsonObject ?: return@mapNotNull null
+                val id = o.str("id") ?: return@mapNotNull null
+                val name = o.str("name") ?: return@mapNotNull null
+                val cmd = o.str("cmd") ?: return@mapNotNull null
+                Movie(
+                    sourceId = source.id,
+                    streamId = id,
+                    name = name,
+                    categoryId = o.str("category_id"),
+                    posterUrl = o.str("screenshot_uri")?.takeIf { it.isNotBlank() }
+                        ?.let { absoluteLogo(s.endpoint, it) },
+                    rating = o.str("rating_imdb")?.toDoubleOrNull() ?: o.str("rating")?.toDoubleOrNull(),
+                    year = leadingYear(o.str("year")),
+                    plot = o.str("description"),
+                    durationSeconds = o.str("time")?.toIntOrNull(),
+                    containerExtension = null,
+                    // Never played directly — see [liveChannels]'s identical marker for channels.
+                    streamUrl = "stalker://${source.id}/vod/$id",
+                    cast = o.str("actors"),
+                    genre = o.str("genres_str"),
+                    director = o.str("director"),
+                    // The portal supplies its own TMDB id directly — confirmed in real data
+                    // ("tmdb_id":"1245347") — an exact match CanonicalMatcher always prefers over
+                    // fuzzy title+year, and without it a provider's own decorated title/off year is
+                    // exactly why so many real matches were silently missed.
+                    tmdbId = o.str("tmdb_id") ?: o.str("tmdb"),
+                    cmd = cmd,
+                )
+            }
+            if (movies.isNotEmpty()) onBatch(movies)
+        }
+    }
+
+    /** Series categories — same shape as [vodCategories], under the `series` type. */
+    suspend fun seriesCategories(source: Source): List<Category> = withContext(Dispatchers.IO) {
+        val arr = callRetrying(source, type = "series", action = "get_categories") as? JsonArray
+            ?: return@withContext emptyList()
+        arr.mapIndexedNotNull { index, element ->
+            val o = element as? JsonObject ?: return@mapIndexedNotNull null
+            val id = o.str("id") ?: return@mapIndexedNotNull null
+            Category(id = id, sourceId = source.id, name = o.str("title") ?: id, kind = StreamKind.SERIES, sortIndex = index)
         }
     }
 
     /**
-     * Fetches every page of a `get_ordered_list` call (`category=*`, all categories). A real
-     * catalogue can report `total_items` in the tens of thousands at 14 items/page — over two
-     * thousand pages — and fetching those one at a time, sequentially, is the difference between
-     * a sync that finishes in a couple of minutes and one that's still running an hour later with
-     * nothing yet visible to show for it (confirmed against a real 33,802-item portal). The first
-     * page is fetched alone to learn `total_items`/`max_page_items`, then every remaining page is
-     * fetched concurrently, [PAGE_FETCH_CONCURRENCY] requests in flight at a time — enough to cut
-     * that wall-clock time by roughly the same factor without hammering the portal hard enough to
-     * risk it throttling or dropping the connection. Capped at [MAX_PAGES] as a last-resort safety
-     * net against a portal that never reports an accurate total — better an incomplete catalogue
-     * than a runaway fetch.
+     * Every series across every category — top-level catalogue entries only, same reasoning and
+     * shape as [vodMovies], streamed via [onBatch] for the same real, confirmed OOM-crash reason.
+     * Episodes are fetched separately and lazily by [seriesEpisodes], same as Xtream's
+     * [app.tufaratv.data.repo.CatalogRepository.ensureEpisodes] pattern.
      */
-    private suspend fun fetchAllPages(source: Source, type: String): List<JsonElement> = coroutineScope {
+    suspend fun seriesList(source: Source, onBatch: suspend (List<Series>) -> Unit) = withContext(Dispatchers.IO) {
+        val s = session(source)
+        fetchAllPagesStreaming(source, type = "series") { batch ->
+            val series = batch.mapNotNull { element ->
+                val o = element as? JsonObject ?: return@mapNotNull null
+                val id = o.str("id") ?: return@mapNotNull null
+                val name = o.str("name") ?: return@mapNotNull null
+                Series(
+                    sourceId = source.id,
+                    seriesId = id,
+                    name = name,
+                    categoryId = o.str("category_id"),
+                    posterUrl = o.str("screenshot_uri")?.takeIf { it.isNotBlank() }
+                        ?.let { absoluteLogo(s.endpoint, it) },
+                    rating = o.str("rating_imdb")?.toDoubleOrNull() ?: o.str("rating")?.toDoubleOrNull(),
+                    year = leadingYear(o.str("year")),
+                    plot = o.str("description"),
+                    cast = o.str("actors"),
+                    genre = o.str("genres_str"),
+                    // See vodMovies' identical field — the portal supplies its own TMDB id directly.
+                    tmdbId = o.str("tmdb_id") ?: o.str("tmdb"),
+                )
+            }
+            if (series.isNotEmpty()) onBatch(series)
+        }
+    }
+
+    /**
+     * Every episode across every season for [seriesId] (the compound `"showId:showId"` id
+     * [seriesList] stores as [Series.seriesId]). Confirmed real Ministra shape by fetching a live
+     * portal directly: `get_ordered_list&movie_id=<showId>` returns one entry per SEASON, each
+     * carrying that season's available episode numbers (its `series` array) and a season-level
+     * `cmd` template — there is no per-episode `cmd`; [createLink]'s `series=<N>` parameter is
+     * what actually picks one episode out of it, confirmed against the same live portal (`type=
+     * vod`, not `type=series`, is what resolves it). [Episode.cmd] stores `"<season
+     * cmd>|<episodeNumber>"` (base64 never contains `|`, so this can't collide with a real cmd);
+     * [app.tufaratv.data.repo.CatalogRepository.resolveVariantPlaybackUrl] splits it back apart
+     * at play time, same "resolve now, not when the list was built" reasoning as everywhere else
+     * a Stalker cmd shows up. Title/plot are left as a numbered placeholder — TMDB backfill
+     * ([app.tufaratv.data.repo.CatalogRepository.backfillEpisodeTmdbMeta], already generic) is
+     * what supplies the real name/synopsis/still once the series' tmdbId is known, exactly the
+     * path an Xtream episode already goes through.
+     */
+    suspend fun seriesEpisodes(source: Source, seriesId: String): List<Episode> = withContext(Dispatchers.IO) {
+        val showId = seriesId.substringBefore(':')
+        val js = callRetrying(source, type = "series", action = "get_ordered_list") { b ->
+            b.addQueryParameter("movie_id", showId)
+            b.addQueryParameter("category", "*")
+        } as? JsonObject ?: return@withContext emptyList()
+        val seasons = js["data"] as? JsonArray ?: return@withContext emptyList()
+        seasons.flatMap seasonLoop@{ element ->
+            val o = element as? JsonObject ?: return@seasonLoop emptyList()
+            val seasonId = o.str("id") ?: return@seasonLoop emptyList()
+            val seasonNum = seasonId.substringAfter(':').toIntOrNull() ?: return@seasonLoop emptyList()
+            val cmd = o.str("cmd")?.takeIf { it.isNotBlank() } ?: return@seasonLoop emptyList()
+            val episodeNumbers = (o["series"] as? JsonArray)
+                ?.mapNotNull { (it as? JsonPrimitive)?.contentOrNull?.toIntOrNull() }
+                .orEmpty()
+            episodeNumbers.map { epNum ->
+                Episode(
+                    sourceId = source.id,
+                    seriesId = seriesId,
+                    episodeId = "$showId:$seasonNum:$epNum",
+                    season = seasonNum,
+                    episodeNumber = epNum,
+                    title = "Episode $epNum",
+                    plot = null,
+                    durationSeconds = null,
+                    stillUrl = null,
+                    // Never played directly — see liveChannels'/vodMovies' identical marker.
+                    streamUrl = "stalker://${source.id}/series/$showId/$seasonNum/$epNum",
+                    cmd = "$cmd|$epNum",
+                )
+            }
+        }
+    }
+
+    /** A `year` field the portal often ships as a full date (`"2025-09-04"`) rather than a bare
+     *  year — `toIntOrNull()` alone silently fails on that and CanonicalMatcher loses its year
+     *  disambiguation entirely. Takes the leading 4 digits, whichever form the portal sent. */
+    private fun leadingYear(raw: String?): Int? =
+        raw?.let { Regex("""\d{4}""").find(it)?.value?.toIntOrNull() }
+
+    /**
+     * Walks every page of a `get_ordered_list` call (`category=*`, all categories), handing each
+     * page's raw items to [onBatch] as soon as they arrive instead of accumulating the whole
+     * catalogue into one list first. A real catalogue can report `total_items` in the tens of
+     * thousands at 14 items/page — over two thousand pages — and holding every page's parsed JSON
+     * (and, upstream, every mapped `Movie`/`Series`) in memory at once is exactly what crashed the
+     * app with an out-of-memory error partway through a real 33,802-item sync (confirmed in
+     * logcat: repeated blocking GCs, then a plain process death — not a matching bug, the sync
+     * just never finished). [onBatch] is called concurrently, [PAGE_FETCH_CONCURRENCY] pages in
+     * flight at a time — enough to cut the sequential wall-clock time by roughly the same factor
+     * without hammering the portal hard enough to risk it throttling or dropping the connection.
+     * Capped at [MAX_PAGES] as a last-resort safety net against a portal that never reports an
+     * accurate total — better an incomplete catalogue than a runaway fetch.
+     */
+    private suspend fun fetchAllPagesStreaming(
+        source: Source,
+        type: String,
+        onBatch: suspend (JsonArray) -> Unit,
+    ): Unit = coroutineScope {
         fun page(p: Int): JsonObject? =
             callRetrying(source, type = type, action = "get_ordered_list") { b ->
                 b.addQueryParameter("category", "*")
                 b.addQueryParameter("p", p.toString())
             } as? JsonObject
 
-        val first = page(1) ?: return@coroutineScope emptyList()
-        val firstData = first["data"] as? JsonArray ?: return@coroutineScope emptyList()
-        if (firstData.isEmpty()) return@coroutineScope emptyList()
+        val first = page(1) ?: return@coroutineScope
+        val firstData = first["data"] as? JsonArray ?: return@coroutineScope
+        if (firstData.isEmpty()) return@coroutineScope
+        onBatch(firstData)
 
         val pageSize = first.str("max_page_items")?.toIntOrNull()?.takeIf { it > 0 } ?: firstData.size
         val totalItems = first.str("total_items")?.toIntOrNull() ?: firstData.size
         val totalPages = ((totalItems + pageSize - 1) / pageSize).coerceIn(1, MAX_PAGES)
-
-        val results = mutableListOf<JsonElement>()
-        results.addAll(firstData)
-        if (totalPages <= 1) return@coroutineScope results
+        if (totalPages <= 1) return@coroutineScope
 
         val semaphore = Semaphore(PAGE_FETCH_CONCURRENCY)
-        val rest = (2..totalPages).map { p ->
-            async { semaphore.withPermit { page(p)?.get("data") as? JsonArray } }
+        (2..totalPages).map { p ->
+            async {
+                semaphore.withPermit {
+                    val data = page(p)?.get("data") as? JsonArray
+                    if (data != null && data.isNotEmpty()) onBatch(data)
+                }
+            }
         }.awaitAll()
-        for (data in rest) if (data != null) results.addAll(data)
-        results
+        Unit
     }
 
     // ---- Session / handshake -----------------------------------------------------------------
