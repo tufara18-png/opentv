@@ -38,7 +38,7 @@ object M3uParser {
 
     fun parse(reader: BufferedReader, sourceId: Long): Result {
         val channels = ArrayList<Channel>()
-        val seenStreamIds = HashSet<String>()
+        val seenStreamUrls = HashSet<String>()
         var declaredEpgUrl: String? = null
         var skipped = 0
 
@@ -76,15 +76,17 @@ object M3uParser {
                         skipped++
                     } else {
                         val attributes = pendingAttributes
-                        val streamId = attributes["tvg-id"]
-                            ?.takeIf { it.isNotBlank() }
-                            ?.let { "tvg:$it" }
+                        // tvg-id identifies the GUIDE programme identity, not a unique stream.
+                        // Providers routinely reuse it for SD/HD/FHD/4K variants. Make the DB key
+                        // URL-specific so all real variants survive, while epgChannelId below keeps
+                        // the shared tvg-id for guide matching.
+                        val tvgId = attributes["tvg-id"]?.takeIf { it.isNotBlank() }
+                        val streamId = tvgId
+                            ?.let { "tvg:$it:url:${stableHash(line)}" }
                             ?: "url:${stableHash(line)}"
 
-                        // Providers repeat the same tvg-id across quality variants. Keep the
-                        // first and drop later duplicates rather than letting them collide on
-                        // the unique index and abort the whole import.
-                        if (seenStreamIds.add(streamId)) {
+                        // Exact duplicate URLs are still noise and must not produce duplicate rows.
+                        if (seenStreamUrls.add(line)) {
                             channels += Channel(
                                 sourceId = sourceId,
                                 streamId = streamId,
