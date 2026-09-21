@@ -1352,12 +1352,20 @@ class CatalogRepository(
     }
 
     /** Movies + series — best-effort, meant to run in the background so a huge VOD list never
-     * blocks live TV. Silent on failure: an account with no VOD is normal, not an error. */
-    suspend fun syncVod(source: Source, nowUtcMillis: Long) = withContext(Dispatchers.IO) {
+     * blocks live TV. Silent on failure: an account with no VOD is normal, not an error.
+     * [onProgress], when supplied, is called with the running (movies, series) counts as batches
+     * land — a large Stalker catalogue streams in over many small pages, so this is what lets a
+     * caller show real, moving progress instead of one static "please wait" message for the whole
+     * multi-minute sync. */
+    suspend fun syncVod(
+        source: Source,
+        nowUtcMillis: Long,
+        onProgress: ((movies: Int, series: Int) -> Unit)? = null,
+    ) = withContext(Dispatchers.IO) {
         runCatching {
             when (source.kind) {
-                SourceKind.XTREAM -> syncXtreamVod(source, nowUtcMillis)
-                SourceKind.STALKER -> syncStalkerVod(source)
+                SourceKind.XTREAM -> syncXtreamVod(source, nowUtcMillis, onProgress)
+                SourceKind.STALKER -> syncStalkerVod(source, onProgress)
                 SourceKind.M3U -> {}
             }
         }.onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
@@ -1418,7 +1426,11 @@ class CatalogRepository(
         return runCatching { stalkerApi.createLink(source, cmd) }.getOrNull() ?: channel.streamUrl
     }
 
-    private suspend fun syncXtreamVod(source: Source, nowUtcMillis: Long) {
+    private suspend fun syncXtreamVod(
+        source: Source,
+        nowUtcMillis: Long,
+        onProgress: ((movies: Int, series: Int) -> Unit)? = null,
+    ) {
         // VOD is optional: plenty of accounts have live TV only, and a 404 on get_vod_streams
         // must not cost the user their channel list. Movies and series are gated independently so
         // a user who only turned off, say, Series still gets their movie library refreshed.
@@ -1444,6 +1456,7 @@ class CatalogRepository(
         }
         if (movies.isNotEmpty()) movieDao.upsertAll(stampedMovieQuality(movies))
         if (series.isNotEmpty()) seriesDao.upsertAll(stampedSeriesQuality(series))
+        onProgress?.invoke(movies.size, series.size)
         if (movies.isNotEmpty()) linkMoviesToCanonical(source.id)
         if (series.isNotEmpty()) linkSeriesToCanonical(source.id)
     }
@@ -1457,7 +1470,10 @@ class CatalogRepository(
      * this held everything at once (see those functions' own doc comments). The canonical-linking
      * pass still runs once at the end, after every batch has landed.
      */
-    private suspend fun syncStalkerVod(source: Source) {
+    private suspend fun syncStalkerVod(
+        source: Source,
+        onProgress: ((movies: Int, series: Int) -> Unit)? = null,
+    ) {
         val moviesOn = settings.moviesEnabled.value
         val seriesOn = settings.seriesEnabled.value
         if (!moviesOn && !seriesOn) return
@@ -1471,12 +1487,16 @@ class CatalogRepository(
             if (seriesCategories.isNotEmpty()) categoryDao.upsertAll(seriesCategories)
         }
 
+        var movieCount = 0
+        var seriesCount = 0
         var sawMovies = false
         if (moviesOn) {
             runCatching {
                 stalkerApi.vodMovies(source) { batch ->
                     sawMovies = true
                     movieDao.upsertAll(stampedMovieQuality(batch))
+                    movieCount += batch.size
+                    onProgress?.invoke(movieCount, seriesCount)
                 }
             }.onFailure { Log.w(TAG, "Stalker movie sync failed for source ${source.id}", it) }
         }
@@ -1488,6 +1508,8 @@ class CatalogRepository(
                 stalkerApi.seriesList(source) { batch ->
                     sawSeries = true
                     seriesDao.upsertAll(stampedSeriesQuality(batch))
+                    seriesCount += batch.size
+                    onProgress?.invoke(movieCount, seriesCount)
                 }
             }.onFailure { Log.w(TAG, "Stalker series sync failed for source ${source.id}", it) }
         }

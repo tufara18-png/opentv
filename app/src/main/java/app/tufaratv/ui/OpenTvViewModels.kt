@@ -300,7 +300,11 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             )
             var vodSucceeded = true
             for ((index, source) in sources.withIndex()) {
-                val result = graph.catalogRepository.syncVod(source, now)
+                val result = graph.catalogRepository.syncVod(source, now) { movies, series ->
+                    _ui.value = _ui.value.copy(
+                        syncMessage = "Mise à jour des films et séries… $movies films, $series séries",
+                    )
+                }
                 if (result.isFailure) {
                     failed = true
                     vodSucceeded = false
@@ -1485,10 +1489,17 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     private suspend fun refreshVodNow() {
         val now = System.currentTimeMillis()
         _vodLoading.value = true
-        val synced = StatusBus.during("Updating catalogue…") {
+        StatusBus.set("Updating catalogue…")
+        val synced = try {
             graph.sourceRepository.enabled()
-                .map { source -> graph.catalogRepository.syncVod(source, now) }
+                .map { source ->
+                    graph.catalogRepository.syncVod(source, now) { movies, series ->
+                        StatusBus.set("Updating catalogue… $movies movies, $series series")
+                    }
+                }
                 .all { it.isSuccess }
+        } finally {
+            StatusBus.set(null)
         }
         _vodLoading.value = false
         if (synced) settings.vodSyncedAtMillis = now
