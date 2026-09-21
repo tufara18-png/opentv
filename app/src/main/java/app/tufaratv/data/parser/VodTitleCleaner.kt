@@ -145,7 +145,35 @@ object VodTitleCleaner {
      *  entry in [ChannelNameNormalizer]'s extra-token table). */
     private val PARSE_SPLIT = Regex("""[\s/|:;,()\[\]-]+""")
 
-    private val EMBEDDED_YEAR = Regex("""\b(19|20)\d{2}\b""")
+    private val PAREN_RELEASE_YEAR = Regex("""[\[(]\s*((?:19|20)\d{2})\s*[\])]""")
+    private val TRAILING_RELEASE_YEAR = Regex("""\b((?:19|20)\d{2})\s*$""")
+
+    /**
+     * Best-effort release-year extraction that deliberately avoids treating every four-digit number
+     * in a title as metadata. Parenthesized years are strong evidence. A bare year is accepted only
+     * at the end of the already-cleaned title, only when it is temporally plausible, and only when
+     * there is enough real title text before it. This keeps "2001: A Space Odyssey", "1917" and
+     * "Blade Runner 2049" intact while still recognizing provider forms like "The Godfather 1972".
+     * A structured provider year remains more trustworthy and is supplied separately by callers.
+     */
+    fun inferReleaseYear(raw: String): Int? {
+        val currentYear = java.util.Calendar.getInstance().get(java.util.Calendar.YEAR)
+        fun plausible(value: Int): Boolean = value in 1900..(currentYear + 2)
+
+        val parenthesized = PAREN_RELEASE_YEAR.findAll(raw)
+            .mapNotNull { it.groupValues[1].toIntOrNull() }
+            .filter(::plausible)
+            .toList()
+        if (parenthesized.isNotEmpty()) return parenthesized.last()
+
+        val cleaned = clean(raw)
+        val match = TRAILING_RELEASE_YEAR.find(cleaned) ?: return null
+        val year = match.groupValues[1].toIntOrNull()?.takeIf(::plausible) ?: return null
+        val prefix = cleaned.substring(0, match.range.first).trim()
+        val words = prefix.split(Regex("""\s+"""))
+            .count { token -> token.any(Char::isLetter) }
+        return year.takeIf { words >= 2 }
+    }
 
     fun parse(raw: String): ParsedVodTitle {
         val folded = ChannelNameNormalizer.foldSuperscripts(raw)
@@ -171,7 +199,7 @@ object VodTitleCleaner {
 
         return ParsedVodTitle(
             title = clean(raw),
-            year = EMBEDDED_YEAR.find(raw)?.value?.toIntOrNull(),
+            year = inferReleaseYear(raw),
             qualityLabel = qualityLabel,
             qualityRank = qualityRank,
             language = language,
