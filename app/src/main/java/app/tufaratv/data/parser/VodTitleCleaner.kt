@@ -100,6 +100,7 @@ object VodTitleCleaner {
      * are deliberate: a trailing release year is digits (`(2026)`) and never matches, so it survives.
      */
     private val TRAILING_CODE_PAREN = Regex("""\s*[\[(]\s*([A-Za-z]{2,10})\s*[\])]\s*$""")
+    private val TRAILING_CODE_BARE = Regex("""\s+([A-Za-z]{2,10})\s*$""")
     private val YEAR_LANGUAGE_PAREN = Regex("""[\[(]\s*((?:19|20)\d{2})\s+([A-Za-z]{2,10})\s*[\])]""")
 
     private val MULTI_SPACE = Regex("""\s+""")
@@ -304,9 +305,21 @@ object VodTitleCleaner {
     private fun stripTrailingCodes(input: String): String {
         var s = input.trim()
         while (true) {
-            val match = TRAILING_CODE_PAREN.find(s) ?: break
-            if (match.groupValues[1].uppercase() !in LANG_CODES) break
-            s = s.substring(0, match.range.first).trim()
+            val bracketed = TRAILING_CODE_PAREN.find(s)
+            if (bracketed != null && bracketed.groupValues[1].uppercase() in LANG_CODES) {
+                s = s.substring(0, bracketed.range.first).trim()
+                continue
+            }
+
+            val bare = TRAILING_CODE_BARE.find(s)
+            if (bare != null) {
+                val token = bare.groupValues[1]
+                if (token == token.uppercase() && token in LANG_CODES) {
+                    s = s.substring(0, bare.range.first).trim()
+                    continue
+                }
+            }
+            break
         }
         return s
     }
