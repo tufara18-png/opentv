@@ -185,6 +185,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
      */
     fun saveAndPrepareLibrary(draft: Source, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
+            graph.settings.libraryPrepared = false
             val startedAt = System.currentTimeMillis()
 
             fun update(stage: String, progress: Float) {
@@ -253,6 +254,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             update("Finalisation de votre accueil…", 0.94f)
             runCatching { graph.recordingEngine.rescanSeriesRules() }
 
+            graph.settings.libraryPrepared = true
             _ui.value = _ui.value.copy(
                 preparingLibrary = false,
                 syncing = false,
