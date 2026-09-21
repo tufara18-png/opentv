@@ -7,6 +7,9 @@ package app.tufaratv.data.remote
 
 import android.util.Log
 import app.tufaratv.core.AppSettings
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.contentOrNull
@@ -49,6 +52,7 @@ data class TmdbEpisodeMeta(val name: String? = null, val overview: String? = nul
  * person actually opens this title — see [TmdbClient]'s class doc for why a browse list is never
  * itself the trigger for a details fetch.
  */
+@Serializable
 data class TmdbListItem(
     val tmdbId: String,
     val title: String,
@@ -59,6 +63,7 @@ data class TmdbListItem(
 )
 
 /** A TMDB genre id + its display name, for a Discover-by-genre rail. */
+@Serializable
 data class TmdbGenre(val id: Int, val name: String)
 
 /**
@@ -303,31 +308,37 @@ class TmdbClient(
 
     /** One genre rail — `genreId` from [genres]. */
     fun discoverByGenre(isMovie: Boolean, genreId: Int, page: Int = 1): List<TmdbListItem> {
-        val key = settings.tmdbApiKey.value.trim()
-        if (key.isEmpty()) return emptyList()
+        val apiKey = settings.tmdbApiKey.value.trim()
+        if (apiKey.isEmpty()) return emptyList()
+        val cacheKey = "discover:" + (if (isMovie) "movie" else "tv") + ":" + genreId + ":" + page + ":" + uiLanguage()
+        readCachedList(cacheKey)?.let { return it }
         val url = TMDB_BASE.newBuilder()
             .addPathSegment("discover")
             .addPathSegment(if (isMovie) "movie" else "tv")
-            .addQueryParameter("api_key", key)
+            .addQueryParameter("api_key", apiKey)
             .addQueryParameter("with_genres", genreId.toString())
             .addQueryParameter("page", page.toString())
             .addQueryParameter("include_adult", "false")
             .addQueryParameter("sort_by", "popularity.desc")
             .addQueryParameter("language", uiLanguage())
             .build()
-        return parseListResults(get(url), isMovie)
+        return parseListResults(get(url), isMovie).also { writeCachedList(cacheKey, it) }
     }
 
     /** The genre list a Discover rail picker offers — small, static per media type, safe to cache
      *  by the caller for the session. */
     fun genres(isMovie: Boolean): List<TmdbGenre> {
-        val key = settings.tmdbApiKey.value.trim()
-        if (key.isEmpty()) return emptyList()
+        val apiKey = settings.tmdbApiKey.value.trim()
+        if (apiKey.isEmpty()) return emptyList()
+        val cacheKey = "genres:" + (if (isMovie) "movie" else "tv") + ":" + uiLanguage()
+        settings.tmdbBrowseCache(cacheKey)?.let { raw ->
+            runCatching { json.decodeFromString<List<TmdbGenre>>(raw) }.getOrNull()?.let { return it }
+        }
         val url = TMDB_BASE.newBuilder()
             .addPathSegment("genre")
             .addPathSegment(if (isMovie) "movie" else "tv")
             .addPathSegment("list")
-            .addQueryParameter("api_key", key)
+            .addQueryParameter("api_key", apiKey)
             .addQueryParameter("language", uiLanguage())
             .build()
         val results = get(url)?.jsonObject?.get("genres")?.jsonArray ?: return emptyList()
@@ -336,7 +347,7 @@ class TmdbClient(
             val id = o["id"]?.jsonPrimitive?.contentOrNull?.toIntOrNull() ?: return@mapNotNull null
             val name = o["name"]?.jsonPrimitive?.contentOrNull ?: return@mapNotNull null
             TmdbGenre(id, name)
-        }
+        }.also { settings.putTmdbBrowseCache(cacheKey, json.encodeToString(it)) }
     }
 
     /** TMDB's own related-title graph. Local availability is resolved separately by the repository. */
@@ -371,16 +382,32 @@ class TmdbClient(
     }
 
     private fun list(pathSegments: List<String>, isMovie: Boolean, page: Int): List<TmdbListItem> {
-        val key = settings.tmdbApiKey.value.trim()
-        if (key.isEmpty()) return emptyList()
+        val apiKey = settings.tmdbApiKey.value.trim()
+        if (apiKey.isEmpty()) return emptyList()
+        val cacheKey = "list:__PATHS__:__PAGE__:__LANG__"
+            .replace("__PATHS__", pathSegments.joinToString("/"))
+            .replace("__PAGE__", page.toString())
+            .replace("__LANG__", uiLanguage())
+        readCachedList(cacheKey)?.let { return it }
         val builder = TMDB_BASE.newBuilder()
         pathSegments.forEach { builder.addPathSegment(it) }
         val url = builder
-            .addQueryParameter("api_key", key)
+            .addQueryParameter("api_key", apiKey)
             .addQueryParameter("page", page.toString())
             .addQueryParameter("language", uiLanguage())
             .build()
-        return parseListResults(get(url), isMovie)
+        return parseListResults(get(url), isMovie).also { writeCachedList(cacheKey, it) }
+    }
+
+    private fun readCachedList(cacheKey: String): List<TmdbListItem>? =
+        settings.tmdbBrowseCache(cacheKey)?.let { raw ->
+            runCatching { json.decodeFromString<List<TmdbListItem>>(raw) }.getOrNull()
+        }
+
+    private fun writeCachedList(cacheKey: String, items: List<TmdbListItem>) {
+        if (items.isNotEmpty()) {
+            runCatching { settings.putTmdbBrowseCache(cacheKey, json.encodeToString(items)) }
+        }
     }
 
     private fun parseListResults(root: JsonElement?, isMovie: Boolean): List<TmdbListItem> {
