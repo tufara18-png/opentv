@@ -68,15 +68,19 @@ object CanonicalMatcher {
 
         // Strip only the release year we actually inferred. Never remove every 19xx/20xx token:
         // numbers such as "2001" and "2049" can be part of the work's real title.
-        val titleForKey = if (year != null) {
-            displayTitle
-                .replace(Regex("""\s*[\[(]\s*__YEAR__\s*[\])]\s*$""".replace("__YEAR__", year.toString())), "")
-                .replace(Regex("""\s+__YEAR__\s*$""".replace("__YEAR__", year.toString())), "")
+        val yearsToStrip = listOfNotNull(inferredYear, explicitYear).distinct()
+        val titleForKey = yearsToStrip.fold(displayTitle) { title, releaseYear ->
+            title
+                .replace(
+                    Regex("""\s*[\[(]\s*__YEAR__\s*[\])]\s*$""".replace("__YEAR__", releaseYear.toString())),
+                    "",
+                )
+                .replace(
+                    Regex("""\s+__YEAR__\s*$""".replace("__YEAR__", releaseYear.toString())),
+                    "",
+                )
                 .trim()
-                .ifBlank { displayTitle }
-        } else {
-            displayTitle
-        }
+        }.ifBlank { displayTitle }
         val titleKey = ChannelNameNormalizer.normalize(titleForKey).groupKey
         return Key(titleKey = titleKey, displayTitle = displayTitle, year = year)
     }
