@@ -52,6 +52,7 @@ object VodTitleCleaner {
         "HR", "SR", "BG", "SK", "SL", "UK", "GB", "US", "USA", "CA", "CAN", "AU", "AUS",
         "NZ", "IE", "IN", "IND", "MX", "MEX", "ZA", "JP", "JPN", "KR", "KOR", "CN",
         "VN", "TH", "ID", "PH", "IR", "IL", "HE", "HEB", "AF", "ALB", "MULTI", "VO",
+        "VF", "VFF", "VFQ", "VOSTFR",
     )
 
     /**
@@ -98,7 +99,8 @@ object VodTitleCleaner {
      * are a known country/language code (see [stripTrailingCodes]). The `{2}` and letters-only class
      * are deliberate: a trailing release year is digits (`(2026)`) and never matches, so it survives.
      */
-    private val TRAILING_CODE_PAREN = Regex("""\s*[\[(]\s*([A-Za-z]{2})\s*[\])]\s*$""")
+    private val TRAILING_CODE_PAREN = Regex("""\s*[\[(]\s*([A-Za-z]{2,10})\s*[\])]\s*$""")
+    private val YEAR_LANGUAGE_PAREN = Regex("""([\[(]\s*(?:19|20)\d{2})\s+([A-Za-z]{2,10})\s*([\])])""")
 
     private val MULTI_SPACE = Regex("""\s+""")
 
@@ -114,7 +116,8 @@ object VodTitleCleaner {
 
         val deprefixed = stripLeadingPrefix(folded)
         val dequalified = stripStrayQuality(deprefixed)
-        val detrailed = stripTrailingCodes(dequalified)
+        val decombined = stripYearLanguageMetadata(dequalified)
+        val detrailed = stripTrailingCodes(decombined)
         val tidied = MULTI_SPACE.replace(detrailed, " ").trim().trim(*EDGE_JUNK).trim()
         return tidied.ifBlank { folded }
     }
@@ -290,6 +293,19 @@ object VodTitleCleaner {
      * year is left untouched: [TRAILING_CODE_PAREN] only matches two *letters*, so `(2026)` never
      * does, and an unknown 2-letter parenthetical (not a real code) is kept rather than guessed at.
      */
+    /** "(2026 MULTI)" -> "(2026)" without touching real parenthetical title text. */
+    private fun stripYearLanguageMetadata(input: String): String =
+        YEAR_LANGUAGE_PAREN.replace(input) { match ->
+            val language = match.groupValues[2].uppercase()
+            if (language in LANG_CODES) {
+                val openingAndYear = match.groupValues[1]
+                val closing = match.groupValues[3]
+                openingAndYear + closing
+            } else {
+                match.value
+            }
+        }
+
     private fun stripTrailingCodes(input: String): String {
         var s = input.trim()
         while (true) {
