@@ -85,6 +85,16 @@ sealed interface PersonTitle {
 /** One quality variant of a film, with the quality parsed from its name by [ChannelNameNormalizer]. */
 data class MovieVariant(val movie: Movie, val qualityLabel: String, val qualityRank: Int)
 
+/** Route-sized playback target for moving to the next episode without leaving the full-screen player. */
+data class NextEpisodePlayback(
+    val mediaKey: String,
+    val streamUrl: String,
+    val title: String,
+    val userAgent: String,
+    val contentKey: String,
+    val variantsKey: String,
+)
+
 /** One logical film with its switchable quality tiers, best first — the VOD analogue of a channel group. */
 @androidx.compose.runtime.Immutable
 data class MovieVariantGroup(
@@ -293,6 +303,41 @@ class CatalogRepository(
     }
 
     suspend fun episode(id: Long): Episode? = episodeDao.byId(id)
+
+    /**
+     * Resolves the episode immediately following [localEpisodeId] in canonical series order.
+     *
+     * The returned URL is only the initial/default stream. [variantsKey] points the VOD player at
+     * the next canonical episode, so its normal source/quality ladder is rebuilt after navigation
+     * and the series-scoped [contentKey] keeps the viewer's source/quality preferences intact.
+     */
+    suspend fun nextEpisode(localEpisodeId: Long): NextEpisodePlayback? = withContext(Dispatchers.IO) {
+        val current = episodeDao.byId(localEpisodeId) ?: return@withContext null
+        val currentCanonicalId = current.canonicalEpisodeId ?: return@withContext null
+        val currentCanonical = canonicalEpisodeDao.byId(currentCanonicalId) ?: return@withContext null
+        val next = canonicalEpisodeDao.nextAfter(
+            canonicalSeriesId = currentCanonical.canonicalSeriesId,
+            season = currentCanonical.season,
+            episodeNumber = currentCanonical.episodeNumber,
+        ) ?: return@withContext null
+        val rows = episodeDao.byCanonicalEpisodeId(next.id)
+        if (rows.isEmpty()) return@withContext null
+
+        // Prefer continuity on the same provider when that episode exists there. Otherwise use the
+        // best advertised quality; the player may still pick another source from the full ladder.
+        val chosen = rows.firstOrNull { it.sourceId == current.sourceId }
+            ?: rows.maxByOrNull { it.qualityRank }
+            ?: return@withContext null
+        val source = sourceDao.byId(chosen.sourceId)
+        NextEpisodePlayback(
+            mediaKey = "ep:${chosen.id}",
+            streamUrl = chosen.streamUrl,
+            title = "S${next.season}E${next.episodeNumber} · ${next.title}",
+            userAgent = source?.userAgent ?: "TufaraTV/0.1 (Android)",
+            contentKey = "series:${next.canonicalSeriesId}",
+            variantsKey = "episode:${next.id}",
+        )
+    }
 
     suspend fun movieByStreamUrl(url: String): Movie? = movieDao.byStreamUrl(url)
 
