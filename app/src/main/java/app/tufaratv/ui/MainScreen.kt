@@ -263,6 +263,10 @@ private fun StreamingHomeScreen(
     val movies by vodViewModel.tmdbTrendingMovies.collectAsState()
     val series by vodViewModel.tmdbTrendingSeries.collectAsState()
 
+    // Home is now the product entry point, so VOD warm-up starts here rather than waiting for the
+    // user to discover the Movies or Shows tabs. The repository TTL keeps this cheap on warm starts.
+    LaunchedEffect(Unit) { vodViewModel.ensureVodLoaded() }
+
     LazyColumn(
         modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(top = 22.dp, bottom = 28.dp),
