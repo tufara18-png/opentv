@@ -422,22 +422,45 @@ class CatalogRepository(
      * same source/category when the movie has no genre metadata to match on.
      */
     suspend fun moreLikeThis(movie: Movie, limit: Int = 20): List<Movie> = withContext(Dispatchers.IO) {
+        // Prefer TMDB's actual recommendation graph when this title has a stable identity, then
+        // intersect it with locally playable canonical entries. Provider genre overlap remains the
+        // offline fallback, never the primary recommender.
+        val tmdbPicks = movie.tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+            runCatching { tmdb.recommendations(id, isMovie = true) }.getOrDefault(emptyList())
+                .mapNotNull { item ->
+                    val canonical = canonicalMovieDao.findByTmdbId(item.tmdbId) ?: run {
+                        val key = CanonicalMatcher.keyOf(item.title, item.year).titleKey
+                        canonicalMovieDao.findAllByTitleKey(key)
+                            .firstOrNull { it.year == null || item.year == null || it.year == item.year }
+                    }
+                    canonical?.let { movieDao.byCanonicalIds(listOf(it.id)).maxByOrNull(Movie::qualityRank) }
+                }
+                .filter { it.id != movie.id }
+                .distinctBy { it.canonicalId ?: it.id }
+                .take(limit)
+        }.orEmpty()
+        if (tmdbPicks.size >= minOf(6, limit)) return@withContext tmdbPicks
+
         val genres = splitGenres(movie.genre).toSet()
-        if (genres.isEmpty()) {
-            return@withContext movieDao.similarByCategory(movie.sourceId, movie.categoryId, movie.id, limit)
+        val fallback = if (genres.isEmpty()) {
+            movieDao.similarByCategory(movie.sourceId, movie.categoryId, movie.id, limit)
+        } else {
+            allMovies().asSequence()
+                .filter { it.id != movie.id }
+                .map { it to sharedGenreCount(it.genre, genres) }
+                .filter { it.second > 0 }
+                .sortedWith(
+                    compareByDescending<Pair<Movie, Int>> { it.second }
+                        .thenByDescending { it.first.sourceId == movie.sourceId }
+                        .thenByDescending { it.first.rating ?: -1.0 },
+                )
+                .map { it.first }
+                .take(limit)
+                .toList()
         }
-        allMovies().asSequence()
-            .filter { it.id != movie.id }
-            .map { it to sharedGenreCount(it.genre, genres) }
-            .filter { it.second > 0 }
-            .sortedWith(
-                compareByDescending<Pair<Movie, Int>> { it.second }
-                    .thenByDescending { it.first.sourceId == movie.sourceId }
-                    .thenByDescending { it.first.rating ?: -1.0 },
-            )
-            .map { it.first }
+        (tmdbPicks + fallback)
+            .distinctBy { it.canonicalId ?: it.id }
             .take(limit)
-            .toList()
     }
 
     // ---- Related by person (Plex-style "click an actor / director") ----------------------------
@@ -484,22 +507,42 @@ class CatalogRepository(
 
     /** "More Like This" for a series. See [moreLikeThis]. */
     suspend fun moreLikeThisSeries(series: Series, limit: Int = 20): List<Series> = withContext(Dispatchers.IO) {
+        val tmdbPicks = series.tmdbId?.takeIf { it.isNotBlank() }?.let { id ->
+            runCatching { tmdb.recommendations(id, isMovie = false) }.getOrDefault(emptyList())
+                .mapNotNull { item ->
+                    val canonical = canonicalSeriesDao.findByTmdbId(item.tmdbId) ?: run {
+                        val key = CanonicalMatcher.keyOf(item.title, item.year).titleKey
+                        canonicalSeriesDao.findAllByTitleKey(key)
+                            .firstOrNull { it.year == null || item.year == null || it.year == item.year }
+                    }
+                    canonical?.let { seriesDao.byCanonicalIds(listOf(it.id)).maxByOrNull(Series::qualityRank) }
+                }
+                .filter { it.id != series.id }
+                .distinctBy { it.canonicalId ?: it.id }
+                .take(limit)
+        }.orEmpty()
+        if (tmdbPicks.size >= minOf(6, limit)) return@withContext tmdbPicks
+
         val genres = splitGenres(series.genre).toSet()
-        if (genres.isEmpty()) {
-            return@withContext seriesDao.similarByCategory(series.sourceId, series.categoryId, series.id, limit)
+        val fallback = if (genres.isEmpty()) {
+            seriesDao.similarByCategory(series.sourceId, series.categoryId, series.id, limit)
+        } else {
+            allSeries().asSequence()
+                .filter { it.id != series.id }
+                .map { it to sharedGenreCount(it.genre, genres) }
+                .filter { it.second > 0 }
+                .sortedWith(
+                    compareByDescending<Pair<Series, Int>> { it.second }
+                        .thenByDescending { it.first.sourceId == series.sourceId }
+                        .thenByDescending { it.first.rating ?: -1.0 },
+                )
+                .map { it.first }
+                .take(limit)
+                .toList()
         }
-        allSeries().asSequence()
-            .filter { it.id != series.id }
-            .map { it to sharedGenreCount(it.genre, genres) }
-            .filter { it.second > 0 }
-            .sortedWith(
-                compareByDescending<Pair<Series, Int>> { it.second }
-                    .thenByDescending { it.first.sourceId == series.sourceId }
-                    .thenByDescending { it.first.rating ?: -1.0 },
-            )
-            .map { it.first }
+        (tmdbPicks + fallback)
+            .distinctBy { it.canonicalId ?: it.id }
             .take(limit)
-            .toList()
     }
 
     /**
@@ -1007,6 +1050,11 @@ class CatalogRepository(
 
     suspend fun tmdbSearch(query: String, isMovie: Boolean, page: Int = 1): List<TmdbListItem> =
         withContext(Dispatchers.IO) { runCatching { tmdb.search(query, isMovie, page) }.getOrDefault(emptyList()) }
+
+    suspend fun tmdbRecommendations(tmdbId: String, isMovie: Boolean, page: Int = 1): List<TmdbListItem> =
+        withContext(Dispatchers.IO) {
+            runCatching { tmdb.recommendations(tmdbId, isMovie, page) }.getOrDefault(emptyList())
+        }
 
     /** One shelf per TMDB genre (Action, Comédie, Horreur…) — the Netflix-style genre rail. Genres
      *  fetched once, then every genre's discover page is requested concurrently rather than one
