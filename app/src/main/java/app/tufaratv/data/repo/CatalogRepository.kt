@@ -154,7 +154,10 @@ internal fun collapseMovieVariants(movies: List<Movie>): List<MovieVariantGroup>
     for (movie in movies) {
         val identity = CanonicalMatcher.keyOf(movie.name, movie.year)
         val parsed = VodTitleCleaner.parse(movie.name)
-        val key = identity.titleKey + "|" + (identity.year?.toString() ?: "")
+        // Once sync has resolved a canonical identity, that id beats every title heuristic.
+        // Only rows in the brief pre-link window fall back to normalized title + release year.
+        val key = movie.canonicalId?.let { "canonical:$it" }
+            ?: "heuristic:${identity.titleKey}|${identity.year?.toString() ?: ""}"
         groups.getOrPut(key) { mutableListOf() }
             .add(MovieVariant(movie, parsed.qualityLabel, parsed.qualityRank))
     }
