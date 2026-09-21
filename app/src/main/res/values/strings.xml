@@ -122,6 +122,7 @@
     <string name="player_rewind">Rewind</string>
     <string name="player_pause">Pause</string>
     <string name="player_forward">Forward</string>
+    <string name="player_next_episode">Next episode</string>
     <string name="player_subtitles">Subtitles</string>
     <string name="player_audio">Audio</string>
     <string name="player_quality">Quality</string>
