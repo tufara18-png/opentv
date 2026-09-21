@@ -174,7 +174,7 @@ class StalkerApi(
         val arr = listPayload(callRetrying(source, type = "vod", action = "get_categories"))
         arr.mapIndexedNotNull { index, element ->
             val o = element as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o.str("id") ?: return@mapIndexedNotNull null
+            val id = o.firstString("id", "category_id", "genre_id") ?: return@mapIndexedNotNull null
             Category(id = id, sourceId = source.id, name = o.firstString("title", "name", "category_name") ?: id, kind = StreamKind.MOVIE, sortIndex = index)
         }
     }
@@ -236,7 +236,7 @@ class StalkerApi(
         val arr = listPayload(callRetrying(source, type = "series", action = "get_categories"))
         arr.mapIndexedNotNull { index, element ->
             val o = element as? JsonObject ?: return@mapIndexedNotNull null
-            val id = o.str("id") ?: return@mapIndexedNotNull null
+            val id = o.firstString("id", "category_id", "genre_id") ?: return@mapIndexedNotNull null
             Category(id = id, sourceId = source.id, name = o.firstString("title", "name", "category_name") ?: id, kind = StreamKind.SERIES, sortIndex = index)
         }
     }
@@ -418,11 +418,10 @@ class StalkerApi(
             .addQueryParameter("token", "")
             .addQueryParameter("JsHttpRequest", "1-xml")
             .build()
-        val js = (execute(source, url, token = null) as? JsonObject)?.obj("js") ?: return null
-        val token = js.str("token")?.takeIf { it.isNotBlank() } ?: return null
-        // Some Ministra versions return a `random` at handshake that the box folds into the
-        // get_profile signature; capture it so we can.
-        return Handshake(token, js.str("random").orEmpty())
+        val payload = unwrapPayload(execute(source, url, token = null)) as? JsonObject ?: return null
+        val token = payload.firstString("token", "access_token", "auth_token")
+            ?.takeIf { it.isNotBlank() } ?: return null
+        return Handshake(token, payload.firstString("random", "challenge", "nonce").orEmpty())
     }
 
     /**
