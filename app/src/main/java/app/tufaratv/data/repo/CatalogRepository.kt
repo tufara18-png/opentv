@@ -543,7 +543,7 @@ class CatalogRepository(
         //    second half is what makes this self-healing for a row that matched TMDB *before* this
         //    title-override existed, instead of needing a manual resync to ever pick it up. Once a
         //    match's title is genuinely clean, `clean(name) == name` and this stops re-querying.
-        if (tmdb.isConfigured() && (result.tmdbId == null || VodTitleCleaner.clean(result.name) != result.name)) {
+        if (tmdb.isConfigured() && needsTmdbRefresh(result)) {
             val meta = runCatching {
                 tmdb.movieMeta(VodTitleCleaner.clean(result.name), result.year, result.tmdbId)
             }.getOrNull()
@@ -568,6 +568,11 @@ class CatalogRepository(
         }
 
         if (result != movie) movieDao.upsertAll(listOf(result))
+        val canonicalId = reconcileMovieCanonical(result)
+        if (canonicalId != null && canonicalId != result.canonicalId) {
+            movieDao.setCanonical(result.id, canonicalId, CanonicalMatchKind.TMDB)
+            result = result.copy(canonicalId = canonicalId, canonicalMatchKind = CanonicalMatchKind.TMDB)
+        }
         result
     }
 
@@ -596,7 +601,7 @@ class CatalogRepository(
         // 2) TMDB is the source of truth once matched — see [movieDetail]'s step 2 for why this
         //    overrides rather than just fills gaps, why the gate also re-tries a dirty-looking
         //    name, and why that's what makes it self-healing. TMDB has no director for TV.
-        if (tmdb.isConfigured() && (result.tmdbId == null || VodTitleCleaner.clean(result.name) != result.name)) {
+        if (tmdb.isConfigured() && needsTmdbRefresh(result)) {
             val meta = runCatching {
                 tmdb.seriesMeta(VodTitleCleaner.clean(result.name), result.year, result.tmdbId)
             }.getOrNull()
@@ -617,7 +622,134 @@ class CatalogRepository(
         }
 
         if (result != series) seriesDao.upsertAll(listOf(result))
+        val canonicalId = reconcileSeriesCanonical(result)
+        if (canonicalId != null && canonicalId != result.canonicalId) {
+            seriesDao.setCanonical(result.id, canonicalId, CanonicalMatchKind.TMDB)
+            result = result.copy(canonicalId = canonicalId, canonicalMatchKind = CanonicalMatchKind.TMDB)
+        }
         result
+    }
+
+    private fun needsTmdbRefresh(movie: Movie): Boolean =
+        movie.tmdbId == null ||
+            VodTitleCleaner.clean(movie.name) != movie.name ||
+            movie.posterUrl == null || movie.backdropUrl == null || movie.plot.isNullOrBlank() ||
+            movie.cast.isNullOrBlank() || movie.genre.isNullOrBlank() || movie.rating == null || movie.year == null
+
+    private fun needsTmdbRefresh(series: Series): Boolean =
+        series.tmdbId == null ||
+            VodTitleCleaner.clean(series.name) != series.name ||
+            series.posterUrl == null || series.backdropUrl == null || series.plot.isNullOrBlank() ||
+            series.cast.isNullOrBlank() || series.genre.isNullOrBlank() || series.rating == null || series.year == null
+
+    private suspend fun reconcileMovieCanonical(movie: Movie): Long? {
+        val tmdbId = movie.tmdbId?.takeIf { it.isNotBlank() } ?: return movie.canonicalId
+        val current = movie.canonicalId?.let { canonicalMovieDao.byId(it) }
+        val exact = canonicalMovieDao.findByTmdbId(tmdbId)
+        val winner = when {
+            exact != null -> exact
+            current != null -> current
+            else -> return null
+        }
+        val loser = current?.takeIf { it.id != winner.id }
+        val title = VodTitleCleaner.stripRedundantYear(movie.name, movie.year)
+        canonicalMovieDao.update(
+            winner.copy(
+                tmdbId = tmdbId,
+                title = title,
+                titleKey = CanonicalMatcher.keyOf(title, movie.year).titleKey,
+                year = movie.year ?: winner.year,
+                posterUrl = movie.posterUrl ?: winner.posterUrl,
+                backdropUrl = movie.backdropUrl ?: winner.backdropUrl,
+                plot = movie.plot ?: winner.plot,
+                rating = movie.rating ?: winner.rating,
+                genre = movie.genre ?: winner.genre,
+                cast = movie.cast ?: winner.cast,
+                director = movie.director ?: winner.director,
+                favourite = winner.favourite || (loser?.favourite == true),
+                lastViewedMillis = maxOf(winner.lastViewedMillis, loser?.lastViewedMillis ?: 0L),
+                alsoKnownAs = mergeAlsoKnownAs(
+                    mergeAlsoKnownAs(winner.alsoKnownAs, title, winner.title),
+                    title,
+                    loser?.title.orEmpty(),
+                ),
+            ),
+        )
+        if (loser != null) {
+            canonicalMovieDao.repointVariants(loser.id, winner.id)
+            migratePreferredVariant("movie:${loser.id}", "movie:${winner.id}")
+            canonicalMovieDao.delete(loser.id)
+        }
+        return winner.id
+    }
+
+    private suspend fun reconcileSeriesCanonical(series: Series): Long? {
+        val tmdbId = series.tmdbId?.takeIf { it.isNotBlank() } ?: return series.canonicalId
+        val current = series.canonicalId?.let { canonicalSeriesDao.byId(it) }
+        val exact = canonicalSeriesDao.findByTmdbId(tmdbId)
+        val winner = when {
+            exact != null -> exact
+            current != null -> current
+            else -> return null
+        }
+        val loser = current?.takeIf { it.id != winner.id }
+        val title = VodTitleCleaner.stripRedundantYear(series.name, series.year)
+        canonicalSeriesDao.update(
+            winner.copy(
+                tmdbId = tmdbId,
+                title = title,
+                titleKey = CanonicalMatcher.keyOf(title, series.year).titleKey,
+                year = series.year ?: winner.year,
+                posterUrl = series.posterUrl ?: winner.posterUrl,
+                backdropUrl = series.backdropUrl ?: winner.backdropUrl,
+                plot = series.plot ?: winner.plot,
+                rating = series.rating ?: winner.rating,
+                genre = series.genre ?: winner.genre,
+                cast = series.cast ?: winner.cast,
+                favourite = winner.favourite || (loser?.favourite == true),
+                lastViewedMillis = maxOf(winner.lastViewedMillis, loser?.lastViewedMillis ?: 0L),
+                alsoKnownAs = mergeAlsoKnownAs(
+                    mergeAlsoKnownAs(winner.alsoKnownAs, title, winner.title),
+                    title,
+                    loser?.title.orEmpty(),
+                ),
+            ),
+        )
+        if (loser != null) {
+            mergeCanonicalSeriesEpisodes(loser.id, winner.id)
+            canonicalSeriesDao.repointVariants(loser.id, winner.id)
+            migratePreferredVariant("series:${loser.id}", "series:${winner.id}")
+            canonicalSeriesDao.delete(loser.id)
+        }
+        return winner.id
+    }
+
+    private suspend fun mergeCanonicalSeriesEpisodes(loserSeriesId: Long, winnerSeriesId: Long) {
+        for (losingEpisode in canonicalEpisodeDao.forSeries(loserSeriesId)) {
+            val existing = canonicalEpisodeDao.findBySlot(winnerSeriesId, losingEpisode.season, losingEpisode.episodeNumber)
+            if (existing == null) {
+                canonicalEpisodeDao.update(losingEpisode.copy(canonicalSeriesId = winnerSeriesId))
+            } else {
+                canonicalEpisodeDao.repointVariants(losingEpisode.id, existing.id)
+                migratePreferredVariant("episode:${losingEpisode.id}", "episode:${existing.id}")
+                canonicalEpisodeDao.delete(losingEpisode.id)
+            }
+        }
+    }
+
+    private suspend fun migratePreferredVariant(oldKey: String, newKey: String) {
+        val old = preferredVariantDao.get(oldKey) ?: return
+        val current = preferredVariantDao.get(newKey)
+        preferredVariantDao.upsert(
+            old.copy(
+                contentKey = newKey,
+                sourceKey = current?.sourceKey ?: old.sourceKey,
+                qualityKey = current?.qualityKey ?: old.qualityKey,
+                engineKey = current?.engineKey ?: old.engineKey,
+                updatedAtMillis = maxOf(current?.updatedAtMillis ?: 0L, old.updatedAtMillis),
+            ),
+        )
+        preferredVariantDao.clear(oldKey)
     }
 
     /**
