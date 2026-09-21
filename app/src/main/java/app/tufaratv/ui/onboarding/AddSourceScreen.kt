@@ -106,6 +106,9 @@ fun AddSourceScreen(
             viewModel = viewModel,
             isTelevision = isTelevision,
             syncing = ui.syncing,
+            progress = ui.preparationProgress,
+            stage = ui.preparationStage,
+            etaSeconds = ui.preparationEtaSeconds,
             error = ui.testError ?: ui.syncMessage?.takeIf { !ui.syncing },
             onUsePhone = { usePhone = true },
             onAdvanced = { useFullSetup = true },
@@ -359,6 +362,9 @@ private fun SimpleStreamingSetup(
     viewModel: SourcesViewModel,
     isTelevision: Boolean,
     syncing: Boolean,
+    progress: Float,
+    stage: String?,
+    etaSeconds: Long?,
     error: String?,
     onUsePhone: () -> Unit,
     onAdvanced: () -> Unit,
@@ -379,7 +385,7 @@ private fun SimpleStreamingSetup(
             username = username.trim(),
             password = password,
         )
-        viewModel.saveAndSync(draft) { ok -> if (ok) onFinished() }
+        viewModel.saveAndPrepareLibrary(draft) { ok -> if (ok) onFinished() }
     }
 
     Column(
@@ -451,12 +457,27 @@ private fun SimpleStreamingSetup(
             }
 
             if (syncing) {
-                Spacer(Modifier.height(12.dp))
+                Spacer(Modifier.height(16.dp))
+                androidx.compose.material3.LinearProgressIndicator(
+                    progress = { progress.coerceIn(0f, 1f) },
+                    modifier = Modifier.fillMaxWidth(),
+                )
+                Spacer(Modifier.height(10.dp))
                 Text(
-                    "Connexion et organisation de votre contenu…",
+                    stage ?: "Préparation de votre espace…",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                etaSeconds?.takeIf { it > 0 }?.let { seconds ->
+                    val minutes = (seconds + 59) / 60
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        if (minutes <= 1) "Moins d’une minute restante"
+                        else "Environ $minutes min restantes",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
 
             error?.takeIf { it.isNotBlank() && !syncing }?.let { message ->
