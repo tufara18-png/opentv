@@ -243,9 +243,12 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             }
 
             update("Organisation des films et séries…", 0.32f)
-            runCatching { graph.catalogRepository.syncVod(saved, now) }
-                .onFailure { Log.w("TufaraTV", "Initial VOD preparation failed", it) }
-            graph.settings.vodSyncedAtMillis = now
+            val initialVod = graph.catalogRepository.syncVod(saved, now)
+            if (initialVod.isSuccess) {
+                graph.settings.vodSyncedAtMillis = now
+            } else {
+                Log.w("TufaraTV", "Initial VOD preparation failed", initialVod.exceptionOrNull())
+            }
 
             update("Construction du guide TV…", 0.78f)
             runCatching { graph.epgRepository.syncAll(now, force = true) }
@@ -294,13 +297,17 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                 catalogueProgress = 0.35f,
                 syncMessage = "Mise à jour des films et séries…",
             )
+            var vodSucceeded = true
             for ((index, source) in sources.withIndex()) {
-                runCatching { graph.catalogRepository.syncVod(source, now) }
-                    .onFailure { failed = true }
+                val result = graph.catalogRepository.syncVod(source, now)
+                if (result.isFailure) {
+                    failed = true
+                    vodSucceeded = false
+                }
                 val part = (index + 1).toFloat() / sources.size.coerceAtLeast(1)
                 _ui.value = _ui.value.copy(catalogueProgress = 0.35f + part * 0.45f)
             }
-            graph.settings.vodSyncedAtMillis = now
+            if (vodSucceeded) graph.settings.vodSyncedAtMillis = now
 
             _ui.value = _ui.value.copy(
                 catalogueProgress = 0.82f,
@@ -1457,11 +1464,9 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val now = System.currentTimeMillis()
         _vodLoading.value = true
         val synced = StatusBus.during("Updating catalogue…") {
-            runCatching {
-                for (source in graph.sourceRepository.enabled()) {
-                    graph.catalogRepository.syncVod(source, now)
-                }
-            }.isSuccess
+            graph.sourceRepository.enabled()
+                .map { source -> graph.catalogRepository.syncVod(source, now) }
+                .all { it.isSuccess }
         }
         _vodLoading.value = false
         if (synced) settings.vodSyncedAtMillis = now
