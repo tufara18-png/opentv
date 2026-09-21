@@ -141,4 +141,12 @@ class VodTitleCleanerTest {
     }
 
 
+    @Test
+    fun `recognized trailing language tags are removed but real title words are preserved`() {
+        assertThat(VodTitleCleaner.clean("Oppenheimer 2023 MULTI")).isEqualTo("Oppenheimer 2023")
+        assertThat(VodTitleCleaner.clean("Oppenheimer (2023) VOSTFR")).isEqualTo("Oppenheimer (2023)")
+        assertThat(VodTitleCleaner.clean("Us")).isEqualTo("Us")
+    }
+
+
 }
