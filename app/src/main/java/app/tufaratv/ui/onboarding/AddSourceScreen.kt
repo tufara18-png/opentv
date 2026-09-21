@@ -79,7 +79,10 @@ fun AddSourceScreen(
     var usePhone by remember { mutableStateOf(isTelevision && editingSourceId == null) }
     var useFullSetup by remember { mutableStateOf(editingSourceId != null) }
     val ui by viewModel.ui.collectAsState()
-    var firstRunSimple by remember { mutableStateOf(editingSourceId == null && ui.sources.isEmpty()) }
+    val settings = remember(context) { app.tufaratv.core.ServiceLocator.get(context).settings }
+    var firstRunSimple by remember {
+        mutableStateOf(editingSourceId == null && (ui.sources.isEmpty() || !settings.libraryPrepared))
+    }
 
     if (usePhone) {
         PhonePairingScreen(
@@ -105,6 +108,7 @@ fun AddSourceScreen(
     if (existing == null && firstRunSimple && !useFullSetup) {
         SimpleStreamingSetup(
             viewModel = viewModel,
+            existing = ui.sources.firstOrNull().takeIf { !settings.libraryPrepared },
             isTelevision = isTelevision,
             syncing = ui.syncing,
             progress = ui.preparationProgress,
@@ -361,6 +365,7 @@ fun AddSourceScreen(
 @Composable
 private fun SimpleStreamingSetup(
     viewModel: SourcesViewModel,
+    existing: Source?,
     isTelevision: Boolean,
     syncing: Boolean,
     progress: Float,
@@ -372,16 +377,18 @@ private fun SimpleStreamingSetup(
     onFinished: () -> Unit,
 ) {
     val context = LocalContext.current
-    var url by remember { mutableStateOf("") }
-    var username by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
+    var url by remember(existing?.id) { mutableStateOf(existing?.url.orEmpty()) }
+    var username by remember(existing?.id) { mutableStateOf(existing?.username.orEmpty()) }
+    var password by remember(existing?.id) { mutableStateOf(existing?.password.orEmpty()) }
 
     val canContinue = url.isNotBlank() && username.isNotBlank() && password.isNotBlank() && !syncing
 
     fun submit() {
-        val draft = Source(
+        val draft = (existing ?: Source(
             name = context.getString(R.string.onboarding_default_provider_name),
             kind = SourceKind.XTREAM,
+            url = "",
+        )).copy(
             url = url.trim(),
             username = username.trim(),
             password = password,
