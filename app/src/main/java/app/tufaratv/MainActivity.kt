@@ -205,7 +205,7 @@ object Routes {
     const val SYNC = "sync"
     const val REC_SETTINGS = "recording-settings"
     const val ABOUT = "about"
-    const val SERIES_DETAIL = "series/{seriesId}?tmdbId={tmdbId}"
+    const val SERIES_DETAIL = "series/{seriesId}?tmdbId={tmdbId}&tmdbTitle={tmdbTitle}"
     const val MOVIE_DETAIL = "movie/{movieId}"
     const val TMDB_MOVIE_DETAIL = "tmdb-movie/{tmdbId}?title={title}&year={year}"
     const val TMDB_SERIES_DETAIL = "tmdb-series/{tmdbId}?title={title}&year={year}"
@@ -228,8 +228,9 @@ object Routes {
         "vod?key={key}&url={url}&title={title}&ua={ua}&contentKey={contentKey}&variantsKey={variantsKey}"
 
     fun player(channelId: Long) = "player/$channelId"
-    fun seriesDetail(seriesId: Long, tmdbId: String = "") =
-        "series/$seriesId?tmdbId=${java.net.URLEncoder.encode(tmdbId, "UTF-8")}"
+    fun seriesDetail(seriesId: Long, tmdbId: String = "", tmdbTitle: String = "") =
+        "series/$seriesId?tmdbId=${java.net.URLEncoder.encode(tmdbId, "UTF-8")}" +
+            "&tmdbTitle=${java.net.URLEncoder.encode(tmdbTitle, "UTF-8")}"
     fun movieDetail(movieId: Long) = "movie/$movieId"
     fun tmdbMovieDetail(tmdbId: String, title: String = "", year: Int? = null) =
         "tmdb-movie/${java.net.URLEncoder.encode(tmdbId, "UTF-8")}?title=${java.net.URLEncoder.encode(title, "UTF-8")}&year=${year ?: ""}"
@@ -506,9 +507,12 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                 val seriesId = entry.arguments?.getString("seriesId")?.toLongOrNull() ?: return@composable
                 val tmdbId = entry.arguments?.getString("tmdbId")
                     ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
+                val tmdbTitle = entry.arguments?.getString("tmdbTitle")
+                    ?.let { java.net.URLDecoder.decode(it, "UTF-8") }.orEmpty()
                 SeriesDetailScreen(
                     seriesId = seriesId,
                     tmdbId = tmdbId.ifBlank { null },
+                    initialTmdbTitle = tmdbTitle,
                     viewModel = vodViewModel,
                     onPlayEpisode = { key, url, title, contentKey, variantsKey ->
                         navController.navigate(
@@ -585,7 +589,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     onFoundLocal = { seriesId ->
                         // Replaces itself in the back stack — Back from the real series page
                         // should return to Shows, not bounce through this resolver screen again.
-                        navController.navigate(Routes.seriesDetail(seriesId, tmdbId)) {
+                        navController.navigate(Routes.seriesDetail(seriesId, tmdbId, initialTitle)) {
                             popUpTo(Routes.TMDB_SERIES_DETAIL) { inclusive = true }
                         }
                     },
