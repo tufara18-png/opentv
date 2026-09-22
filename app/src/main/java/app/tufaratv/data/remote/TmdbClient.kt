@@ -121,12 +121,32 @@ class TmdbClient(
         return o["imdb_id"]?.jsonPrimitive?.contentOrNull?.takeIf { it.startsWith("tt") }
     }
 
+    /**
+     * A provider-supplied tmdbId is trusted first — it's normally exact — but never blindly: a
+     * stale or wrong one (confirmed live against a real catalogue: providers do ship ids that
+     * 404, e.g. a title TMDB has since merged or delisted) used to make the whole lookup fail
+     * outright, with no fallback, even though a plain title+year search would have found the
+     * real entry. That's a title genuinely on the provider silently never matching TMDB for a
+     * reason that has nothing to do with the title itself. Now a dead provider id retries once
+     * via search before giving up, the same path taken when no id was supplied at all.
+     */
     private fun lookup(isMovie: Boolean, title: String, year: Int?, tmdbId: String?): TmdbMeta? {
         val key = settings.tmdbApiKey.value.trim()
         if (key.isEmpty()) return null
         val query = searchTitle(title)
         if (query.isBlank() && tmdbId.isNullOrBlank()) return null
-        val id = tmdbId?.takeIf { it.isNotBlank() } ?: searchId(isMovie, query, year, key) ?: return null
+
+        val providerId = tmdbId?.takeIf { it.isNotBlank() }
+        if (providerId != null) {
+            val direct = runCatching { details(isMovie, providerId, key) }
+                .onFailure { Log.w(TAG, "TMDB details failed for $providerId", it) }
+                .getOrNull()
+            if (direct != null) return direct
+            if (query.isBlank()) return null
+            Log.w(TAG, "Provider tmdbId $providerId didn't resolve, falling back to title search for \"$query\"")
+        }
+
+        val id = searchId(isMovie, query, year, key) ?: return null
         return runCatching { details(isMovie, id, key) }
             .onFailure { Log.w(TAG, "TMDB details failed for $id", it) }
             .getOrNull()
