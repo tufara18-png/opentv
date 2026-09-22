@@ -1093,6 +1093,24 @@ class CatalogRepository(
             canonical?.let { seriesDao.byCanonicalIds(listOf(it.id)).firstOrNull()?.id }
         }
 
+    /** Narrows a TMDB browse-list page down to titles this device can actually watch — every item's
+     *  [movieAvailabilityForTmdb]/[localSeriesIdForTmdb] lookup run concurrently, still a purely
+     *  local/indexed check. Home and Search rows use this so a poster is never a dead end. */
+    suspend fun filterAvailable(items: List<TmdbListItem>): List<TmdbListItem> = withContext(Dispatchers.IO) {
+        coroutineScope {
+            items.map { item ->
+                async {
+                    val available = if (item.isMovie) {
+                        movieAvailabilityForTmdb(item.tmdbId, item.title, item.year).canonicalId != null
+                    } else {
+                        localSeriesIdForTmdb(item.tmdbId, item.title, item.year) != null
+                    }
+                    item to available
+                }
+            }.awaitAll()
+        }.filter { it.second }.map { it.first }
+    }
+
     // ---- TMDB browse catalog: thin IO-dispatched pass-throughs to TmdbClient ----------------------
 
     suspend fun tmdbTrending(isMovie: Boolean, page: Int = 1): List<TmdbListItem> =

@@ -58,12 +58,14 @@ import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.filter
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -1186,51 +1188,46 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         val progress: Float,
     )
 
-    /** This week's TMDB-trending movies, for the Home "Tendances" rail — the catalog itself, not
-     *  filtered to what any synced playlist happens to carry (see [CatalogRepository]'s TMDB
-     *  availability doc comment). Empty with no key configured; loaded once per ViewModel
-     *  lifetime, matching how [tmdbTrendingSeries] and the rest of this screen's rows behave. */
-    val tmdbTrendingMovies: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbTrending(isMovie = true)) }
+    /** True once the very first VOD sync (see [ensureVodLoaded]) has resolved — whether it found
+     *  an existing catalogue on disk or finished downloading one. Every TMDB browse row below
+     *  waits for this before fetching: showing TMDB's full catalog before local availability is
+     *  even known would advertise titles as watchable before we can tell, false hope the user
+     *  explicitly asked not to show. */
+    private val _catalogReady = MutableStateFlow(false)
+    val catalogReady: StateFlow<Boolean> = _catalogReady.asStateFlow()
+
+    private fun tmdbRow(fetch: suspend () -> List<TmdbListItem>): StateFlow<List<TmdbListItem>> =
+        catalogReady.filter { it }.take(1)
+            .map { graph.catalogRepository.filterAvailable(fetch()) }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    val tmdbTrendingSeries: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbTrending(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    val tmdbPopularMovies: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbPopular(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    val tmdbPopularSeries: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbPopular(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    val tmdbNewMovies: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbRecentlyReleased(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    val tmdbNewSeries: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbRecentlyReleased(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    val tmdbTopRatedMovies: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbTopRated(isMovie = true)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
-
-    val tmdbTopRatedSeries: StateFlow<List<TmdbListItem>> =
-        flow { emit(graph.catalogRepository.tmdbTopRated(isMovie = false)) }
-            .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+    /** This week's TMDB-trending movies, for the Home "Tendances" rail — narrowed to titles this
+     *  device's provider(s) actually carry (see [CatalogRepository.filterAvailable]), and not
+     *  fetched at all until [catalogReady] — a poster here must always be something the person can
+     *  actually press play on. Loaded once per ViewModel lifetime, matching every other row below. */
+    val tmdbTrendingMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTrending(isMovie = true) }
+    val tmdbTrendingSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTrending(isMovie = false) }
+    val tmdbPopularMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbPopular(isMovie = true) }
+    val tmdbPopularSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbPopular(isMovie = false) }
+    val tmdbNewMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbRecentlyReleased(isMovie = true) }
+    val tmdbNewSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbRecentlyReleased(isMovie = false) }
+    val tmdbTopRatedMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTopRated(isMovie = true) }
+    val tmdbTopRatedSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTopRated(isMovie = false) }
 
     /** One shelf per TMDB genre — Action, Comédie, Horreur, etc. — the Netflix-style genre rail
-     *  under the curated Trending/Popular/New/Top-rated rows. */
+     *  under the curated Trending/Popular/New/Top-rated rows, same availability filter per shelf. */
     val tmdbGenreRowsMovies: StateFlow<List<GenreGroup<TmdbListItem>>> =
-        flow { emit(graph.catalogRepository.tmdbGenreRows(isMovie = true)) }
+        catalogReady.filter { it }.take(1)
+            .map { filterGenreRows(graph.catalogRepository.tmdbGenreRows(isMovie = true)) }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbGenreRowsSeries: StateFlow<List<GenreGroup<TmdbListItem>>> =
-        flow { emit(graph.catalogRepository.tmdbGenreRows(isMovie = false)) }
+        catalogReady.filter { it }.take(1)
+            .map { filterGenreRows(graph.catalogRepository.tmdbGenreRows(isMovie = false)) }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
+
+    private suspend fun filterGenreRows(rows: List<GenreGroup<TmdbListItem>>): List<GenreGroup<TmdbListItem>> =
+        rows.map { it.copy(items = graph.catalogRepository.filterAvailable(it.items)) }.filter { it.items.isNotEmpty() }
 
     fun tmdbConfigured(): Boolean = graph.catalogRepository.tmdbConfigured()
 
@@ -1474,10 +1471,12 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
 
         if (haveCatalogue) {
             loadHomeFeeds()
+            _catalogReady.value = true
             return
         }
 
         refreshVodNow()
+        _catalogReady.value = true
     }
 
     /** Explicit full VOD refresh. The Settings > Catalogue screen is the normal entry point. */
@@ -1527,13 +1526,15 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
-    /** Strict TMDB catalog search. Movies/series shown in the global search UI come from TMDB
-     *  even when no IPTV source carries them; IPTV is consulted only after opening a result. */
+    /** TMDB catalog search, narrowed to titles this device can actually watch — same
+     *  [CatalogRepository.filterAvailable] gate as the Home rows, and for the same reason: a
+     *  search result someone can tap into and find nothing behind is worse than not showing it. */
     @OptIn(FlowPreview::class)
     val tmdbMovieResults: StateFlow<List<TmdbListItem>> =
         vodSearchInput.map { it.trim() }.debounce(200).distinctUntilChanged()
             .mapLatest { q ->
-                if (q.length < 2) emptyList() else graph.catalogRepository.tmdbSearch(q, isMovie = true)
+                if (q.length < 2) emptyList()
+                else graph.catalogRepository.filterAvailable(graph.catalogRepository.tmdbSearch(q, isMovie = true))
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -1541,7 +1542,8 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     val tmdbSeriesResults: StateFlow<List<TmdbListItem>> =
         vodSearchInput.map { it.trim() }.debounce(200).distinctUntilChanged()
             .mapLatest { q ->
-                if (q.length < 2) emptyList() else graph.catalogRepository.tmdbSearch(q, isMovie = false)
+                if (q.length < 2) emptyList()
+                else graph.catalogRepository.filterAvailable(graph.catalogRepository.tmdbSearch(q, isMovie = false))
             }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 

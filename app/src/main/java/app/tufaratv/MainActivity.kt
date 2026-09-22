@@ -17,13 +17,17 @@ import android.util.Rational
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.launch
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -98,6 +102,10 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handlePlayIntent(intent)
         val isTelevision = isRunningOnTelevision(this)
+
+        lifecycleScope.launch {
+            ServiceLocator.get(this@MainActivity).sourceRepository.seedDefaultIfEmpty()
+        }
 
         setContent {
             val settings = remember { ServiceLocator.get(this).settings }
@@ -662,6 +670,36 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
         // "About to switch to a recording" banner — shows 30s before an auto-switch fires.
         RecordingSwitchBanner()
+
+        // Blocks the whole app during the very first VOD sync only (an existing catalogue never
+        // re-triggers this — see VodViewModel.vodLoading) so nothing half-loaded is reachable:
+        // no empty Movies/Shows tab, no TMDB row advertising a title before local availability is
+        // even known.
+        FirstSyncGate(vodViewModel)
+    }
+}
+
+@Composable
+private fun FirstSyncGate(vodViewModel: VodViewModel) {
+    val loading by vodViewModel.vodLoading.collectAsState()
+    if (!loading) return
+    val message by app.tufaratv.core.StatusBus.message.collectAsState()
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(Color.Black.copy(alpha = 0.96f))
+            .focusable(),
+        contentAlignment = Alignment.Center,
+    ) {
+        Column(horizontalAlignment = Alignment.CenterHorizontally) {
+            CircularProgressIndicator()
+            Spacer(Modifier.height(20.dp))
+            Text(
+                message ?: stringResource(R.string.vod_first_sync_title),
+                style = MaterialTheme.typography.titleMedium,
+                color = Color.White,
+            )
+        }
     }
 }
 
