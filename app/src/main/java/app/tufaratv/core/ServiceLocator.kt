@@ -88,6 +88,7 @@ object ServiceLocator {
 
         val catalogRepository: CatalogRepository by lazy {
             CatalogRepository(
+                database = database,
                 sourceDao = database.sources(),
                 channelDao = database.channels(),
                 categoryDao = database.categories(),
@@ -112,9 +113,11 @@ object ServiceLocator {
                 feedDao = database.epgFeeds(),
                 aliasDao = database.epgAliases(),
                 channelDao = database.channels(),
+                categoryDao = database.categories(),
                 sourceDao = database.sources(),
                 api = xtreamApi,
                 http = httpClient,
+                settings = settings,
             )
         }
 

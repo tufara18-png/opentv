@@ -24,6 +24,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.StarOutline
 import androidx.compose.material3.Icon
@@ -205,6 +207,7 @@ fun ChannelManagerScreen(
                     )
                 } else {
                     val selectedGroup = categoryGroups.firstOrNull { it.key == selectedCategory }
+                    val selectedGroupIndex = categoryGroups.indexOfFirst { it.key == selectedCategory }
                     BrowsePane(
                         hasCategories = categoryGroups.isNotEmpty(),
                         categorySelected = selectedCategory != null,
@@ -216,6 +219,14 @@ fun ChannelManagerScreen(
                         onToggleGroupHidden = { hidden ->
                             val group = selectedGroup ?: return@BrowsePane
                             viewModel.setGroupHidden(group.key, group.ids, hidden)
+                        },
+                        canMoveGroupUp = selectedGroupIndex > 0,
+                        canMoveGroupDown = selectedGroupIndex >= 0 && selectedGroupIndex < categoryGroups.lastIndex,
+                        onMoveGroupUp = {
+                            selectedGroup?.let { viewModel.moveManagerGroup(it.key, -1) }
+                        },
+                        onMoveGroupDown = {
+                            selectedGroup?.let { viewModel.moveManagerGroup(it.key, 1) }
                         },
                     )
                 }
@@ -271,6 +282,10 @@ private fun BrowsePane(
     onToggleHidden: (ChannelsViewModel.Row, Boolean) -> Unit,
     onToggleFavourite: (ChannelsViewModel.Row) -> Unit,
     onToggleGroupHidden: (Boolean) -> Unit,
+    canMoveGroupUp: Boolean,
+    canMoveGroupDown: Boolean,
+    onMoveGroupUp: () -> Unit,
+    onMoveGroupDown: () -> Unit,
 ) {
     when {
         !hasCategories -> Hint(stringResource(R.string.channels_manager_no_channels))
@@ -295,6 +310,24 @@ private fun BrowsePane(
                         overflow = TextOverflow.Ellipsis,
                         modifier = Modifier.weight(1f),
                     )
+                    IconButton(
+                        enabled = canMoveGroupUp,
+                        onClick = onMoveGroupUp,
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowUp,
+                            contentDescription = stringResource(R.string.channels_manager_move_group_up),
+                        )
+                    }
+                    IconButton(
+                        enabled = canMoveGroupDown,
+                        onClick = onMoveGroupDown,
+                    ) {
+                        Icon(
+                            Icons.Filled.KeyboardArrowDown,
+                            contentDescription = stringResource(R.string.channels_manager_move_group_down),
+                        )
+                    }
                     OutlinedButton(onClick = { onToggleGroupHidden(!groupHidden) }) {
                         Text(
                             if (groupHidden) stringResource(R.string.channels_manager_show_group)

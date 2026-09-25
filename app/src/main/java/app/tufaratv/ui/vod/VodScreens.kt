@@ -5,7 +5,6 @@
  */
 package app.tufaratv.ui.vod
 
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -35,6 +34,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
@@ -45,8 +45,10 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.focus.onFocusChanged
-import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
@@ -79,12 +81,15 @@ fun MoviesScreen(
     isSyncing: Boolean,
     viewModel: VodViewModel = viewModel(),
 ) {
-    val resume by viewModel.continueWatching.collectAsState()
+    val allResume by viewModel.continueWatching.collectAsState()
+    val resume = allResume.filter { it.mediaKey.startsWith("movie:") }
+    val favourites by viewModel.favouriteMovies.collectAsState()
     val tmdbTrending by viewModel.tmdbTrendingMovies.collectAsState()
     val tmdbPopular by viewModel.tmdbPopularMovies.collectAsState()
     val tmdbNew by viewModel.tmdbNewMovies.collectAsState()
     val tmdbTopRated by viewModel.tmdbTopRatedMovies.collectAsState()
     val tmdbGenreRows by viewModel.tmdbGenreRowsMovies.collectAsState()
+    val browseReady by viewModel.movieBrowseReady.collectAsState()
 
     // Movies is a TMDB-first catalog now: Trending/Popular/New/Top-rated come straight from TMDB,
     // not from whatever a synced playlist happens to carry — see CatalogRepository's TMDB
@@ -93,7 +98,7 @@ fun MoviesScreen(
     LaunchedEffect(Unit) { if (hasSources) viewModel.ensureVodLoaded() }
 
     val tmdbConfigured = remember { viewModel.tmdbConfigured() }
-    val hasContent = resume.isNotEmpty() || tmdbTrending.isNotEmpty() || tmdbPopular.isNotEmpty() ||
+    val hasContent = resume.isNotEmpty() || favourites.isNotEmpty() || tmdbTrending.isNotEmpty() || tmdbPopular.isNotEmpty() ||
         tmdbNew.isNotEmpty() || tmdbTopRated.isNotEmpty() || tmdbGenreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
@@ -104,8 +109,8 @@ fun MoviesScreen(
             when {
                 !hasContent -> when {
                     !tmdbConfigured -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_tmdb_key_needed))
-                    isSyncing -> LoadingVod(stringResource(R.string.vod_loading_movies))
-                    else -> LoadingVod(stringResource(R.string.vod_loading_movies))
+                    isSyncing || !browseReady -> LoadingVod(stringResource(R.string.vod_loading_movies))
+                    else -> EmptyVod(stringResource(R.string.vod_no_movies), stringResource(R.string.vod_no_movies_provider))
                 }
                 else -> LazyColumn(
                     contentPadding = PaddingValues(vertical = 8.dp),
@@ -113,6 +118,9 @@ fun MoviesScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
+                    if (favourites.isNotEmpty()) item(key = "favourites") {
+                        MoviePosterRow(stringResource(R.string.vod_favourites), favourites, onOpenMovie)
+                    }
                     if (tmdbTrending.isNotEmpty()) item(key = "tmdb_trending") {
                         TmdbPosterRow(stringResource(R.string.vod_tmdb_trending), tmdbTrending, onOpenTmdb)
                     }
@@ -149,17 +157,21 @@ fun SeriesScreen(
     isSyncing: Boolean,
     viewModel: VodViewModel = viewModel(),
 ) {
-    val resume by viewModel.continueWatching.collectAsState()
+    val allResume by viewModel.continueWatching.collectAsState()
+    val resume = allResume.filter { it.mediaKey.startsWith("ep:") }
+    val favourites by viewModel.favouriteSeries.collectAsState()
     val tmdbTrending by viewModel.tmdbTrendingSeries.collectAsState()
     val tmdbPopular by viewModel.tmdbPopularSeries.collectAsState()
     val tmdbNew by viewModel.tmdbNewSeries.collectAsState()
     val tmdbTopRated by viewModel.tmdbTopRatedSeries.collectAsState()
     val tmdbGenreRows by viewModel.tmdbGenreRowsSeries.collectAsState()
+    val catalogReady by viewModel.catalogReady.collectAsState()
+    val browseReady by viewModel.seriesBrowseReady.collectAsState()
 
     LaunchedEffect(Unit) { if (hasSources) viewModel.ensureVodLoaded() }
 
     val tmdbConfigured = remember { viewModel.tmdbConfigured() }
-    val hasContent = resume.isNotEmpty() || tmdbTrending.isNotEmpty() || tmdbPopular.isNotEmpty() ||
+    val hasContent = resume.isNotEmpty() || favourites.isNotEmpty() || tmdbTrending.isNotEmpty() || tmdbPopular.isNotEmpty() ||
         tmdbNew.isNotEmpty() || tmdbTopRated.isNotEmpty() || tmdbGenreRows.isNotEmpty()
 
     Column(Modifier.fillMaxSize()) {
@@ -168,7 +180,12 @@ fun SeriesScreen(
             when {
                 !hasContent -> when {
                     !tmdbConfigured -> EmptyVod(stringResource(R.string.vod_no_shows), stringResource(R.string.vod_tmdb_key_needed))
-                    else -> LoadingVod(stringResource(R.string.vod_loading_shows))
+                    isSyncing || !catalogReady || !browseReady ->
+                        LoadingVod(stringResource(R.string.vod_loading_shows))
+                    else -> EmptyVod(
+                        stringResource(R.string.vod_no_shows),
+                        stringResource(R.string.vod_no_shows_provider),
+                    )
                 }
                 else -> LazyColumn(
                     contentPadding = PaddingValues(vertical = 8.dp),
@@ -176,6 +193,9 @@ fun SeriesScreen(
                     modifier = Modifier.fillMaxSize(),
                 ) {
                     if (resume.isNotEmpty()) item(key = "cw") { ContinueWatchingRow(resume, onResume) }
+                    if (favourites.isNotEmpty()) item(key = "favourites") {
+                        SeriesPosterRow(stringResource(R.string.vod_favourites), favourites, onOpenSeries)
+                    }
                     if (tmdbTrending.isNotEmpty()) item(key = "tmdb_trending") {
                         TmdbPosterRow(stringResource(R.string.vod_tmdb_trending), tmdbTrending, onOpenTmdb)
                     }
@@ -220,6 +240,7 @@ private fun MovieCategoryGrid(movies: List<Movie>, viewModel: VodViewModel, onOp
                 posterUrl = group.primary.posterUrl,
                 subtitle = group.primary.year?.toString(),
                 rating = group.primary.rating,
+                favourite = group.primary.favourite,
                 onClick = { onOpenMovie(group.primary) },
             )
         }
@@ -243,6 +264,7 @@ private fun SeriesCategoryGrid(series: List<Series>, onOpenSeries: (Series) -> U
                 posterUrl = item.posterUrl,
                 subtitle = item.year?.toString(),
                 rating = item.rating,
+                favourite = item.favourite,
                 onClick = { onOpenSeries(item) },
             )
         }
@@ -266,6 +288,7 @@ internal fun MoviePosterRow(title: String, movies: List<Movie>, onOpenMovie: (Mo
                     posterUrl = movie.posterUrl,
                     subtitle = movie.year?.toString(),
                     rating = movie.rating,
+                    favourite = movie.favourite,
                     onClick = { onOpenMovie(movie) },
                 )
             }
@@ -288,6 +311,7 @@ internal fun SeriesPosterRow(title: String, series: List<Series>, onOpenSeries: 
                     posterUrl = item.posterUrl,
                     subtitle = item.year?.toString(),
                     rating = item.rating,
+                    favourite = item.favourite,
                     onClick = { onOpenSeries(item) },
                 )
             }
@@ -300,13 +324,25 @@ internal fun SeriesPosterRow(title: String, series: List<Series>, onOpenSeries: 
  *  availability doc comment for why opening one of these is still an instant, local lookup. */
 @Composable
 internal fun TmdbPosterRow(title: String, items: List<TmdbListItem>, onOpenTmdb: (TmdbListItem) -> Unit) {
+    var showingAll by remember(title) { mutableStateOf(false) }
+    val visibleItems = if (showingAll) items else items.take(8)
     Column(Modifier.fillMaxWidth()) {
-        SectionHeader(title)
+        Row(
+            Modifier.fillMaxWidth().padding(end = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            SectionHeader(title, Modifier.weight(1f))
+            if (items.size > 8) {
+                TextButton(onClick = { showingAll = !showingAll }) {
+                    Text(if (showingAll) "Réduire" else "Voir tout")
+                }
+            }
+        }
         LazyRow(
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
         ) {
-            items(items, key = { it.tmdbId }) { item ->
+            items(visibleItems, key = { it.tmdbId }) { item ->
                 PosterCard(
                     title = item.title,
                     posterUrl = item.posterUrl,
@@ -320,7 +356,7 @@ internal fun TmdbPosterRow(title: String, items: List<TmdbListItem>, onOpenTmdb:
 }
 
 @Composable
-internal fun SectionHeader(title: String) {
+internal fun SectionHeader(title: String, modifier: Modifier = Modifier) {
     Text(
         title,
         style = MaterialTheme.typography.titleMedium,
@@ -328,15 +364,15 @@ internal fun SectionHeader(title: String) {
         color = MaterialTheme.colorScheme.onSurface,
         maxLines = 1,
         overflow = TextOverflow.Ellipsis,
-        modifier = Modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
+        modifier = modifier.padding(start = 16.dp, end = 16.dp, bottom = 4.dp),
     )
 }
 
 /**
  * The reusable poster card: art, title and an optional year, with a rating chip, a quality badge and
- * a resume progress bar drawn over the art where the data is there. The focused card scales up and
- * gains a primary border — the app's established focus cue — and, being focusable, the lazy row
- * brings it into view on its own.
+ * a resume progress bar drawn over the art where the data is there. Focus uses a border instead of
+ * a per-card scale layer. On low-power TV devices, keeping a graphics layer for every visible poster
+ * makes horizontal/vertical focus navigation needlessly expensive.
  */
 @Composable
 internal fun PosterCard(
@@ -348,15 +384,14 @@ internal fun PosterCard(
     rating: Double? = null,
     qualityBadge: String? = null,
     progress: Float? = null,
+    favourite: Boolean = false,
 ) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "posterScale")
+    val focusColor = MaterialTheme.colorScheme.primary
     Column(
         modifier
             .width(POSTER_WIDTH)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(10.dp))
             .clickable(onClick = onClick)
             .padding(4.dp),
     ) {
@@ -366,9 +401,12 @@ internal fun PosterCard(
                 .aspectRatio(2f / 3f)
                 .clip(RoundedCornerShape(8.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
+                .tvFocusRing(focusColor) { focused }
                 .then(
-                    if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
-                    else Modifier,
+                    when {
+                        favourite -> Modifier.border(2.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(8.dp))
+                        else -> Modifier
+                    },
                 ),
         ) {
             AsyncImage(
@@ -390,6 +428,13 @@ internal fun PosterCard(
                     modifier = Modifier.align(Alignment.TopEnd).padding(6.dp),
                 )
             }
+            if (favourite) {
+                Badge(
+                    text = "♥",
+                    highlight = true,
+                    modifier = Modifier.align(Alignment.TopStart).padding(6.dp),
+                )
+            }
             progress?.let {
                 LinearProgressIndicator(
                     progress = { it },
@@ -401,7 +446,7 @@ internal fun PosterCard(
         Text(
             title,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
@@ -459,13 +504,11 @@ internal fun ContinueWatchingRow(
 @Composable
 private fun ResumeCard(item: VodViewModel.ResumeItem, onClick: () -> Unit) {
     var focused by remember { mutableStateOf(false) }
-    val scale by animateFloatAsState(if (focused) 1.06f else 1f, label = "resumeScale")
+    val focusColor = MaterialTheme.colorScheme.primary
     Column(
         Modifier
             .width(190.dp)
-            .graphicsLayer { scaleX = scale; scaleY = scale }
             .onFocusChanged { focused = it.isFocused }
-            .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
             .padding(4.dp),
     ) {
@@ -475,10 +518,7 @@ private fun ResumeCard(item: VodViewModel.ResumeItem, onClick: () -> Unit) {
                 .height(107.dp)
                 .clip(RoundedCornerShape(6.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .then(
-                    if (focused) Modifier.border(3.dp, MaterialTheme.colorScheme.primary, RoundedCornerShape(6.dp))
-                    else Modifier,
-                ),
+                .tvFocusRing(focusColor, radius = 6.dp) { focused },
         ) {
             AsyncImage(
                 model = item.posterUrl,
@@ -495,9 +535,28 @@ private fun ResumeCard(item: VodViewModel.ResumeItem, onClick: () -> Unit) {
         Text(
             item.title,
             style = MaterialTheme.typography.bodyMedium,
-            color = if (focused) MaterialTheme.colorScheme.onSurface else MaterialTheme.colorScheme.onSurfaceVariant,
+            color = MaterialTheme.colorScheme.onSurface,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
+        )
+    }
+}
+
+/** Read focus in the draw phase: moving focus redraws the ring without recomposing the card. */
+private fun Modifier.tvFocusRing(
+    color: Color,
+    radius: androidx.compose.ui.unit.Dp = 8.dp,
+    focused: () -> Boolean,
+): Modifier = drawWithContent {
+    drawContent()
+    if (focused()) {
+        val stroke = 3.dp.toPx()
+        drawRoundRect(
+            color = color,
+            topLeft = androidx.compose.ui.geometry.Offset(stroke / 2f, stroke / 2f),
+            size = androidx.compose.ui.geometry.Size(size.width - stroke, size.height - stroke),
+            cornerRadius = androidx.compose.ui.geometry.CornerRadius(radius.toPx(), radius.toPx()),
+            style = Stroke(stroke),
         )
     }
 }

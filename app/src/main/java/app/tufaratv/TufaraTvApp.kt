@@ -38,7 +38,9 @@ class TufaraTvApp : Application(), ImageLoaderFactory {
         ImageLoader.Builder(this)
             .memoryCache {
                 MemoryCache.Builder(this)
-                    .maxSizePercent(0.25)
+                    // Posters stay in the disk cache; a smaller RAM cache avoids GC pauses while
+                    // ExoPlayer is decoding a live stream on memory-constrained TV sticks.
+                    .maxSizePercent(0.125)
                     .build()
             }
             .diskCache {
@@ -59,7 +61,10 @@ class TufaraTvApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         val graph = ServiceLocator.get(this)
-        SyncWorker.schedule(this)
+        // Channels are a persistent local catalogue. Never re-download them just because the app
+        // process started (or because an old periodic worker became due): initial source setup and
+        // the explicit Refresh action are the only channel-sync entry points.
+        SyncWorker.disableAutomatic(this)
 
         // When the normaliser has moved on since the catalogue was last processed, re-clean
         // the stored channels and re-run the guide matcher — locally, no re-download. This
@@ -103,11 +108,11 @@ class TufaraTvApp : Application(), ImageLoaderFactory {
                 graph.catalogRepository.renormalizeAll()
                 prefs.edit().putInt("normalizer_version", CatalogRepository.NORMALIZER_VERSION).apply()
             }
-            // Runs on every launch. It is cheap when nothing is stale (feeds within their
-            // refresh window are skipped), but it is what makes the free regional guide turn
-            // itself on and download the first time — without waiting for the user to find
-            // the refresh button. ensureFeeds + auto-enable-by-region + matcher all live here.
-            graph.epgRepository.syncAll(System.currentTimeMillis(), force = false)
+            // Only create the feed definitions at launch. Programme rows are persistent cache:
+            // re-downloading and upserting a large XMLTV while the user is navigating made the
+            // Chromecast spend minutes in SQLite/GC and caused the visible stutter. Guide refresh
+            // remains available explicitly from Settings/Live; a process start is now read-only.
+            graph.epgRepository.ensureFeeds()
         }
     }
 }

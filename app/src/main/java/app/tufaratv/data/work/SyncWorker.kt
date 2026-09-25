@@ -9,26 +9,23 @@ import android.content.Context
 import android.util.Log
 import androidx.work.Constraints
 import androidx.work.CoroutineWorker
-import androidx.work.ExistingPeriodicWorkPolicy
 import androidx.work.ExistingWorkPolicy
 import androidx.work.NetworkType
 import androidx.work.OneTimeWorkRequestBuilder
-import androidx.work.PeriodicWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.WorkerParameters
 import app.tufaratv.core.ServiceLocator
 import app.tufaratv.data.repo.CatalogRepository
-import java.util.concurrent.TimeUnit
 
 /**
- * Lightweight background refresh of live channels and the guide.
+ * Explicit background refresh of live channels and the guide.
  *
  * The VOD catalogue is intentionally excluded: movies/series are a large persistent local library
  * and are refreshed only during first-run preparation or explicitly from Settings > Catalogue.
  *
- * Runs on WorkManager rather than a foreground timer so it survives the app being killed,
- * which on a TV box happens constantly. Failures return [Result.retry] with WorkManager's
- * exponential backoff — the app never hammers a provider that is already struggling.
+ * Runs only after the user asks for a refresh. The channel catalogue otherwise stays in Room and
+ * startup performs no provider request. WorkManager is retained so an explicit refresh survives
+ * navigation away from Settings.
  */
 class SyncWorker(
     context: Context,
@@ -98,25 +95,10 @@ class SyncWorker(
             )
         }
 
-        fun schedule(context: Context) {
-            val request = PeriodicWorkRequestBuilder<SyncWorker>(6, TimeUnit.HOURS)
-                .setConstraints(
-                    Constraints.Builder()
-                        .setRequiredNetworkType(NetworkType.CONNECTED)
-                        .build(),
-                )
-                .setBackoffCriteria(
-                    androidx.work.BackoffPolicy.EXPONENTIAL,
-                    15,
-                    TimeUnit.MINUTES,
-                )
-                .build()
-
-            WorkManager.getInstance(context).enqueueUniquePeriodicWork(
-                WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request,
-            )
+        fun disableAutomatic(context: Context) {
+            // Also removes the periodic job created by older builds, otherwise upgrading would
+            // leave it alive even though this version no longer schedules it.
+            WorkManager.getInstance(context).cancelUniqueWork(WORK_NAME)
         }
     }
 }

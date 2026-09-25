@@ -240,5 +240,5 @@ object XmltvParser {
     }
 
     private const val DEFAULT_DURATION_MILLIS = 30 * 60 * 1000L
-    private const val UNTITLED = "No information"
+    private const val UNTITLED = "Aucune information"
 }

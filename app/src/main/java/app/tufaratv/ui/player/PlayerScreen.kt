@@ -55,6 +55,7 @@ import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PictureInPictureAlt
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Subtitles
+import androidx.compose.material.icons.filled.Star
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -109,6 +110,8 @@ import app.tufaratv.player.PlaybackQueue
 import app.tufaratv.player.PlayerController
 import app.tufaratv.ui.RecordingBackgroundDialog
 import app.tufaratv.ui.RecordingBackgroundPrompt
+import app.tufaratv.ui.nativeview.NativeChannelListView
+import app.tufaratv.ui.nativeview.NativeProgrammeListView
 import coil.compose.AsyncImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -135,6 +138,7 @@ import java.util.Locale
 @Composable
 fun PlayerScreen(
     channelId: Long?,
+    livePlayback: LivePlaybackViewModel,
     onBack: () -> Unit,
 ) {
     val context = LocalContext.current
@@ -143,14 +147,7 @@ fun PlayerScreen(
     val settings = remember { graph.settings }
     val scope = remember { CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate) }
     val subtitlesDefault by settings.subtitlesEnabled.collectAsState()
-    val controller = remember {
-        PlayerController(
-            context, scope, graph.streamingHttpClient,
-            subtitlesEnabled = settings.subtitlesEnabled.value,
-            // Opt-in shallow DVR so the transport's pause/rewind actually holds on a live stream.
-            dvr = settings.livePauseEnabled.value,
-        )
-    }
+    val controller = livePlayback.controller
     val state by controller.state.collectAsState()
     val tracks by controller.tracks.collectAsState()
     // What's recording right now, so the Record button can show as armed for this channel.
@@ -167,7 +164,6 @@ fun PlayerScreen(
         onDispose {
             window?.clearFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
             view.keepScreenOn = false
-            controller.release()
             scope.cancel()
         }
     }
@@ -181,23 +177,26 @@ fun PlayerScreen(
     // pane, so switching to full-screen never loses what you could already see there.
     var nowProgramme by remember { mutableStateOf<Programme?>(null) }
     var nextProgramme by remember { mutableStateOf<Programme?>(null) }
+    var programmeSchedule by remember { mutableStateOf<List<Programme>>(emptyList()) }
     LaunchedEffect(currentId, variants) {
         val channel = variants.firstOrNull { it.id == currentId }
         while (true) {
             if (channel == null) {
                 nowProgramme = null
                 nextProgramme = null
+                programmeSchedule = emptyList()
             } else {
                 // Walk the same override→provider→matched guide-id candidates as the browsing
                 // guide (Channel.epgCandidates), so this lights up under the same conditions as
                 // the channel list's "now playing" line. `upcoming` already returns the
                 // currently-airing programme first (its end is still ahead of now), then the next.
                 val now = System.currentTimeMillis()
-                val pair = channel.epgCandidates.firstNotNullOfOrNull { id ->
-                    graph.epgRepository.upcoming(id, now, limit = 2).takeIf { it.isNotEmpty() }
+                val schedule = channel.epgCandidates.firstNotNullOfOrNull { id ->
+                    graph.epgRepository.upcoming(id, now, limit = 12).takeIf { it.isNotEmpty() }
                 }
-                nowProgramme = pair?.getOrNull(0)
-                nextProgramme = pair?.getOrNull(1)
+                programmeSchedule = schedule.orEmpty()
+                nowProgramme = schedule?.firstOrNull { it.isLiveAt(now) }
+                nextProgramme = schedule?.firstOrNull { it.startUtcMillis >= now }
             }
             delay(60_000)
         }
@@ -210,6 +209,7 @@ fun PlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var panel by remember { mutableStateOf(Panel.NONE) }
     var channelListVisible by remember { mutableStateOf(false) }
+    var programmeListVisible by remember { mutableStateOf(false) }
     var interaction by remember { mutableIntStateOf(0) }
     // Offered once per session the first time the user records here while OpenTV isn't exempt from
     // battery optimisation, so the capture survives the screen sleeping. Never blocks recording.
@@ -236,6 +236,7 @@ fun PlayerScreen(
     val panelFocus = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
     val listFocus = remember { FocusRequester() }
+    val programmeFocus = remember { FocusRequester() }
 
     // The channel list you were browsing, for channel up/down and the in-player list. Snapshotted
     // on entry so it doesn't shift under you mid-session.
@@ -249,21 +250,10 @@ fun PlayerScreen(
     fun tuneTo(channel: Channel) {
         currentId = channel.id
         paused = false
-        settings.lastChannelId = channel.id
-        scope.launch {
-            val source = graph.sourceRepository.byId(channel.sourceId)
-            // Xtream/M3U carry a ready URL; a Stalker channel's URL is minted here from its cmd.
-            val url = graph.catalogRepository.resolvePlaybackUrl(channel, source)
-            controller.play(
-                PlayerController.Request(
-                    url = url,
-                    title = channel.shownName,
-                    userAgent = source?.userAgent ?: "TufaraTV/0.1 (Android)",
-                    isLive = true,
-                ),
-                debounce = false,
-            )
-        }
+        // Zapping inside the player must update the same history as launching from the guide.
+        // The recent-channel strip is therefore correct without a database write or query.
+        settings.recordRecentChannel(channel.id)
+        livePlayback.play(channel, debounce = false)
     }
 
     fun playChannelId(id: Long) {
@@ -303,7 +293,11 @@ fun PlayerScreen(
         val id = channelId ?: return@LaunchedEffect
         val channel = graph.catalogRepository.channel(id) ?: return@LaunchedEffect
         variants = graph.catalogRepository.variants(channel)
-        tuneTo(variants.firstOrNull { it.id == channel.id } ?: channel)
+        val target = variants.firstOrNull { it.id == channel.id } ?: channel
+        currentId = target.id
+        settings.recordRecentChannel(target.id)
+        livePlayback.enterFullScreen()
+        livePlayback.play(target, debounce = false)
     }
 
     // Sleep timer: when the armed deadline passes, stop and leave the player. Re-arming from
@@ -314,7 +308,7 @@ fun PlayerScreen(
         val wait = d - System.currentTimeMillis()
         if (wait > 0) delay(wait)
         SleepTimer.clear()
-        controller.stop()
+        livePlayback.stop()
         onBack()
     }
 
@@ -355,11 +349,14 @@ fun PlayerScreen(
     // you wanted to dismiss the bar.
     BackHandler {
         when {
+            programmeListVisible -> programmeListVisible = false
             channelListVisible -> channelListVisible = false
             panel != Panel.NONE -> panel = Panel.NONE
             controlsVisible -> controlsVisible = false
             else -> {
-                controller.stop()
+                // Return the same decoder/connection to the guide preview. Stopping here forced a
+                // full provider reconnect and made Back look like a broken preview transition.
+                livePlayback.returnToGuide()
                 onBack()
             }
         }
@@ -384,6 +381,14 @@ fun PlayerScreen(
             runCatching { rootFocus.requestFocus() }
         }
     }
+    LaunchedEffect(programmeListVisible) {
+        if (programmeListVisible) {
+            delay(40)
+            runCatching { programmeFocus.requestFocus() }
+        } else if (!controlsVisible && !channelListVisible) {
+            runCatching { rootFocus.requestFocus() }
+        }
+    }
 
     Box(
         Modifier
@@ -401,7 +406,7 @@ fun PlayerScreen(
                         reveal(); interaction++; true
                     }
                     // A picker or the channel list owns the whole d-pad while it's up.
-                    channelListVisible || panel != Panel.NONE -> {
+                    channelListVisible || programmeListVisible || panel != Panel.NONE -> {
                         interaction++
                         false
                     }
@@ -410,15 +415,26 @@ fun PlayerScreen(
                     // channel banner, then it auto-hides.
                     event.key == Key.DirectionUp || event.key == Key.ChannelUp -> { zapBy(-1); reveal(); true }
                     event.key == Key.DirectionDown || event.key == Key.ChannelDown -> { zapBy(1); reveal(); true }
-                    // With the bar up, left/right drive its buttons; let them through.
-                    controlsVisible -> {
+                    // While a healthy stream plays, left/right navigate the visible control bar.
+                    // A dead/slow channel must not trap the viewer behind an endless Buffering
+                    // screen: during buffering, fall through so LEFT can still open channels.
+                    controlsVisible && state !is PlayerController.State.Buffering -> {
                         interaction++
                         false
                     }
-                    // Immersive: left opens the channel list, right the quality picker.
-                    event.key == Key.DirectionLeft -> { if (queue.isNotEmpty()) channelListVisible = true; true }
+                    // Immersive: left opens channels, right opens the current channel schedule.
+                    // Quality stays one click away in the normal control bar.
+                    event.key == Key.DirectionLeft -> {
+                        controlsVisible = false
+                        if (queue.isNotEmpty()) channelListVisible = true
+                        true
+                    }
                     event.key == Key.DirectionRight -> {
-                        if (variants.size > 1) { reveal(); panel = Panel.QUALITY }; true
+                        if (programmeSchedule.isNotEmpty()) {
+                            controlsVisible = false
+                            programmeListVisible = true
+                        } else reveal()
+                        true
                     }
                     else -> { reveal(); true }
                 }
@@ -504,6 +520,7 @@ fun PlayerScreen(
             is PlayerController.State.Error -> s.title
             else -> ""
         }
+        val currentQueueItem = queue.firstOrNull { it.id == currentId }
 
         AnimatedVisibility(
             visible = controlsVisible && !inPip,
@@ -542,13 +559,30 @@ fun PlayerScreen(
                 }
 
                 if (channelTitle.isNotEmpty()) {
-                    Text(
-                        channelTitle,
-                        style = MaterialTheme.typography.headlineSmall,
-                        color = Color.White,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        AsyncImage(
+                            model = currentQueueItem?.logoUrl,
+                            contentDescription = null,
+                            modifier = Modifier.size(46.dp).clip(RoundedCornerShape(6.dp)),
+                        )
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            currentQueueItem?.number?.let { number ->
+                                Text(
+                                    number.toString(),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = Color.White.copy(alpha = 0.62f),
+                                )
+                            }
+                            Text(
+                                channelTitle,
+                                style = MaterialTheme.typography.headlineSmall,
+                                color = Color.White,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
                     Spacer(Modifier.height(8.dp))
                 }
 
@@ -587,6 +621,7 @@ fun PlayerScreen(
                     // An explicit on-screen way out of the player, matching the VOD player —
                     // the remote's own Back key still works too.
                     BarChip(Icons.AutoMirrored.Filled.ArrowBack, stringResource(R.string.common_back), false) {
+                        livePlayback.returnToGuide()
                         onBack()
                     }
                     Spacer(Modifier.width(20.dp))
@@ -657,9 +692,6 @@ fun PlayerScreen(
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.CenterStart),
         ) {
-            val currentIndex = queue.indexOfFirst { it.id == currentId }.coerceAtLeast(0)
-            val listState = rememberLazyListState()
-            LaunchedEffect(Unit) { runCatching { listState.scrollToItem(currentIndex) } }
             Column(
                 Modifier
                     .fillMaxHeight()
@@ -668,7 +700,7 @@ fun PlayerScreen(
                     .padding(vertical = 16.dp),
             ) {
                 Text(
-                    stringResource(R.string.common_channels),
+                    PlaybackQueue.groupName.ifBlank { stringResource(R.string.common_channels) },
                     style = MaterialTheme.typography.titleMedium,
                     color = Color.White.copy(alpha = 0.7f),
                     modifier = Modifier.padding(horizontal = 16.dp),
@@ -684,26 +716,77 @@ fun PlayerScreen(
                         leadingLabel = stringResource(R.string.player_last),
                         onClick = {
                             playChannelId(lastItem.id)
-                            channelListVisible = false
                         },
                     )
                     Spacer(Modifier.height(4.dp))
                 }
-                LazyColumn(state = listState) {
-                    itemsIndexed(queue, key = { _, item -> item.id }) { index, item ->
-                        ChannelListRow(
-                            item = item,
-                            playing = item.id == currentId,
-                            focusRequester = if (index == currentIndex) listFocus else null,
-                            onClick = {
-                                playChannelId(item.id)
-                                channelListVisible = false
-                            },
+                AndroidView(
+                    factory = { NativeChannelListView(it) },
+                    update = { list ->
+                        list.submit(queue, currentId) { id ->
+                            // First OK tunes; second OK on the active channel closes the panel.
+                            if (id == currentId) channelListVisible = false else playChannelId(id)
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
+            }
+        }
+
+        // Current-channel programme list, matching TiviMate's lightweight player-side EPG. The
+        // same single `upcoming(..., 12)` query already supplies now/next, so this panel adds no
+        // polling and never loads the full guide while video is decoding.
+        AnimatedVisibility(
+            visible = programmeListVisible && !inPip,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.CenterEnd),
+        ) {
+            Column(
+                Modifier
+                    .fillMaxHeight()
+                    .width(480.dp)
+                    .background(Color.Black.copy(alpha = 0.82f))
+                    .padding(vertical = 18.dp),
+            ) {
+                Row(
+                    Modifier.padding(horizontal = 18.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    AsyncImage(
+                        model = currentQueueItem?.logoUrl,
+                        contentDescription = null,
+                        modifier = Modifier.size(42.dp).clip(RoundedCornerShape(6.dp)),
+                    )
+                    Spacer(Modifier.width(12.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            currentQueueItem?.name ?: channelTitle,
+                            style = MaterialTheme.typography.titleLarge,
+                            color = Color.White,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                        Text(
+                            stringResource(R.string.player_programmes),
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = Color.White.copy(alpha = 0.6f),
                         )
                     }
                 }
+                Spacer(Modifier.height(14.dp))
+                AndroidView(
+                    factory = { NativeProgrammeListView(it) },
+                    update = { list ->
+                        list.submit(programmeSchedule, System.currentTimeMillis()) { programme ->
+                            if (programme.isLiveAt(System.currentTimeMillis())) programmeListVisible = false
+                        }
+                    },
+                    modifier = Modifier.fillMaxWidth().weight(1f),
+                )
             }
         }
+
     }
 
     if (showBackgroundPrompt) {
@@ -714,6 +797,55 @@ fun PlayerScreen(
             },
             onDismiss = { showBackgroundPrompt = false },
         )
+    }
+}
+
+@Composable
+private fun ProgrammeScheduleRow(
+    programme: Programme,
+    live: Boolean,
+    focusRequester: FocusRequester?,
+    onClick: () -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val bg = when {
+        focused -> MaterialTheme.colorScheme.primary
+        live -> Color.White.copy(alpha = 0.14f)
+        else -> Color.Transparent
+    }
+    val fg = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
+    Row(
+        Modifier
+            .fillMaxWidth()
+            .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            .onFocusChanged { focused = it.isFocused }
+            .background(bg)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 12.dp),
+        verticalAlignment = Alignment.Top,
+    ) {
+        Text(
+            playerTimeFormat.format(java.util.Date(programme.startUtcMillis)),
+            style = MaterialTheme.typography.titleMedium,
+            color = fg.copy(alpha = 0.72f),
+            modifier = Modifier.width(64.dp),
+        )
+        Column(Modifier.weight(1f)) {
+            Text(
+                programme.title,
+                style = MaterialTheme.typography.titleMedium,
+                color = fg,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            if (live) {
+                Spacer(Modifier.height(7.dp))
+                LinearProgressIndicator(
+                    progress = { programme.progressAt(System.currentTimeMillis()) },
+                    modifier = Modifier.fillMaxWidth().height(3.dp),
+                )
+            }
+        }
     }
 }
 
@@ -757,7 +889,32 @@ private fun ChannelListRow(
             modifier = Modifier.size(32.dp).clip(RoundedCornerShape(4.dp)),
         )
         Spacer(Modifier.width(12.dp))
-        Text(item.name, style = MaterialTheme.typography.titleMedium, color = fg, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        Column(Modifier.weight(1f)) {
+            Text(
+                item.name,
+                style = MaterialTheme.typography.titleMedium,
+                color = fg,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis,
+            )
+            item.nowTitle?.takeIf { it.isNotBlank() }?.let { title ->
+                Text(
+                    title,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = fg.copy(alpha = 0.72f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+        if (item.favourite) {
+            Icon(
+                Icons.Filled.Star,
+                contentDescription = stringResource(R.string.common_favourite),
+                tint = if (focused) fg else MaterialTheme.colorScheme.primary,
+                modifier = Modifier.size(18.dp),
+            )
+        }
     }
 }
 

@@ -64,6 +64,7 @@ import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.flow.take
 import kotlinx.coroutines.launch
@@ -128,16 +129,16 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
     /** Saves, then immediately pulls the catalogue so the user sees channels, not a spinner. */
     fun saveAndSync(draft: Source, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(syncing = true, syncMessage = "Saving source…")
+            _ui.value = _ui.value.copy(syncing = true, syncMessage = "Enregistrement de la source…")
             val id = graph.sourceRepository.save(draft)
             val saved = graph.sourceRepository.byId(id)
             if (saved == null) {
-                _ui.value = _ui.value.copy(syncing = false, syncMessage = "Could not save source.")
+                _ui.value = _ui.value.copy(syncing = false, syncMessage = "Impossible d’enregistrer la source.")
                 onDone(false)
                 return@launch
             }
 
-            _ui.value = _ui.value.copy(syncMessage = "Loading channels…")
+            _ui.value = _ui.value.copy(syncMessage = "Chargement des chaînes…")
             val now = System.currentTimeMillis()
             // Load live channels first and get the user watching straight away. Movies, series and
             // the guide are what make a big provider take minutes — they load in the background so
@@ -151,8 +152,8 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                 is CatalogRepository.SyncResult.Success -> {
                     _ui.value = _ui.value.copy(
                         syncing = false,
-                        syncMessage = "Loaded ${result.channelCount} channels. The guide is " +
-                            "loading in the background; Movies and Shows load when you open them.",
+                        syncMessage = "${result.channelCount} chaînes chargées. Le guide se charge " +
+                            "en arrière-plan; les films et séries se chargent à leur ouverture.",
                     )
                     onDone(true)
                 }
@@ -161,17 +162,17 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
             // Background: the guide. Movies/series are pulled on demand from their own tabs, so
             // nothing the user hasn't asked for ever blocks the channels they can already watch.
             runCatching {
-                val summary = StatusBus.during("Building the TV guide…") {
+                val summary = StatusBus.during("Création du guide TV…") {
                     graph.epgRepository.syncAll(now)
                 }
                 _ui.value = _ui.value.copy(
                     syncMessage = when {
                         summary.channelsMatched > 0 ->
-                            "Guide ready — matched ${summary.channelsMatched} of " +
-                                "${summary.channelsTotal} channels."
+                            "Guide prêt — ${summary.channelsMatched} chaînes associées sur " +
+                                "${summary.channelsTotal}."
                         else ->
-                            "Channels ready. No guide data matched yet — add a free guide " +
-                                "under Guide settings."
+                            "Chaînes prêtes. Aucune donnée de guide associée — ajoutez un guide " +
+                                "gratuit dans les réglages du guide."
                     },
                 )
                 // Book any new series-link airings the fresh guide just revealed.
@@ -181,9 +182,10 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     /**
-     * First-run path: build the whole local library once, then let every normal launch read Room.
-     * Progress is phase-based but ETA is derived from actual elapsed time, so it improves as the
-     * provider reveals how fast it is instead of showing a hard-coded fake duration.
+     * First-run path: live channels are the only blocking phase. Once they are usable the app
+     * opens immediately, while VOD and EPG populate the persistent Room cache in the background.
+     * Closing the app mid-import is safe: [VodViewModel] resumes whichever catalogue half is still
+     * empty on the next launch.
      */
     fun saveAndPrepareLibrary(draft: Source, onDone: (Boolean) -> Unit = {}) {
         viewModelScope.launch {
@@ -244,7 +246,20 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                 is CatalogRepository.SyncResult.Success -> Unit
             }
 
-            update("Organisation des films et séries…", 0.32f)
+            // The user can watch TV now. Never hold the whole product behind a provider's 40k-title
+            // VOD crawl or a slow XMLTV endpoint.
+            graph.settings.libraryPrepared = true
+            _ui.value = _ui.value.copy(
+                preparingLibrary = false,
+                syncing = false,
+                preparationStage = "Chaînes prêtes",
+                preparationProgress = 1f,
+                preparationEtaSeconds = 0L,
+                syncMessage = null,
+            )
+            onDone(true)
+
+            StatusBus.set("Films et séries en cours de préparation…")
             val initialVod = graph.catalogRepository.syncVod(saved, now)
             if (initialVod.isSuccess) {
                 graph.settings.vodSyncedAtMillis = now
@@ -252,23 +267,12 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                 Log.w("TufaraTV", "Initial VOD preparation failed", initialVod.exceptionOrNull())
             }
 
-            update("Construction du guide TV…", 0.78f)
+            StatusBus.set("Guide TV en cours de préparation…")
             runCatching { graph.epgRepository.syncAll(now, force = true) }
                 .onFailure { Log.w("TufaraTV", "Initial guide preparation failed", it) }
 
-            update("Finalisation de votre accueil…", 0.94f)
             runCatching { graph.recordingEngine.rescanSeriesRules() }
-
-            graph.settings.libraryPrepared = true
-            _ui.value = _ui.value.copy(
-                preparingLibrary = false,
-                syncing = false,
-                preparationStage = "Prêt",
-                preparationProgress = 1f,
-                preparationEtaSeconds = 0L,
-                syncMessage = null,
-            )
-            onDone(true)
+            StatusBus.set(null)
         }
     }
 
@@ -278,11 +282,18 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
     fun refreshCatalogue(onDone: (Boolean) -> Unit = {}) {
         if (_ui.value.catalogueRefreshing) return
         viewModelScope.launch {
+            fun publishStatus(message: String, progress: Float) {
+                val bounded = progress.coerceIn(0f, 1f)
+                StatusBus.set(message, bounded)
+                _ui.value = _ui.value.copy(catalogueProgress = bounded, syncMessage = message)
+            }
+
             _ui.value = _ui.value.copy(
                 catalogueRefreshing = true,
                 catalogueProgress = 0.05f,
                 syncMessage = "Mise à jour des chaînes…",
             )
+            publishStatus("Mise à jour des chaînes…", 0.05f)
             val now = System.currentTimeMillis()
             var failed = false
             graph.settings.clearTmdbBrowseCache()
@@ -290,21 +301,22 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
 
             for ((index, source) in sources.withIndex()) {
                 val base = index.toFloat() / sources.size.coerceAtLeast(1)
-                _ui.value = _ui.value.copy(catalogueProgress = 0.05f + base * 0.25f)
+                publishStatus("Mise à jour des chaînes…", 0.05f + base * 0.25f)
                 if (graph.catalogRepository.syncLive(source, now) is CatalogRepository.SyncResult.Failed) {
                     failed = true
                 }
             }
 
-            _ui.value = _ui.value.copy(
-                catalogueProgress = 0.35f,
-                syncMessage = "Mise à jour des films et séries…",
-            )
+            publishStatus("Mise à jour des films et séries…", 0.35f)
             var vodSucceeded = true
             for ((index, source) in sources.withIndex()) {
                 val result = graph.catalogRepository.syncVod(source, now) { movies, series ->
-                    _ui.value = _ui.value.copy(
-                        syncMessage = "Mise à jour des films et séries… $movies films, $series séries",
+                    val loaded = (movies + series).toFloat()
+                    val sourceProgress = loaded / (loaded + 1f)
+                    val base = index.toFloat() / sources.size.coerceAtLeast(1)
+                    publishStatus(
+                        "Mise à jour des films et séries… $movies films, $series séries",
+                        0.35f + (base + sourceProgress / sources.size.coerceAtLeast(1)) * 0.45f,
                     )
                 }
                 if (result.isFailure) {
@@ -312,22 +324,22 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
                     vodSucceeded = false
                 }
                 val part = (index + 1).toFloat() / sources.size.coerceAtLeast(1)
-                _ui.value = _ui.value.copy(catalogueProgress = 0.35f + part * 0.45f)
+                publishStatus("Films et séries chargés.", 0.35f + part * 0.45f)
             }
             if (vodSucceeded) graph.settings.vodSyncedAtMillis = now
 
-            _ui.value = _ui.value.copy(
-                catalogueProgress = 0.82f,
-                syncMessage = "Mise à jour du guide…",
-            )
+            publishStatus("Mise à jour du guide…", 0.82f)
             runCatching { graph.epgRepository.syncAll(now, force = true) }
                 .onFailure { failed = true }
 
+            val finalMessage = if (failed) "Catalogue mis à jour avec quelques erreurs." else "Catalogue à jour."
+            StatusBus.set(finalMessage, 1f)
             _ui.value = _ui.value.copy(
                 catalogueRefreshing = false,
                 catalogueProgress = 1f,
-                syncMessage = if (failed) "Catalogue mis à jour avec quelques erreurs." else "Catalogue à jour.",
+                syncMessage = finalMessage,
             )
+            StatusBus.set(null)
             onDone(!failed)
         }
     }
@@ -348,7 +360,7 @@ class SourcesViewModel(app: Application) : AndroidViewModel(app) {
 
     fun refreshAll() {
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(syncing = true, syncMessage = "Refreshing…")
+            _ui.value = _ui.value.copy(syncing = true, syncMessage = "Actualisation…")
             val now = System.currentTimeMillis()
             var channels = 0
             var problems = 0
@@ -417,12 +429,19 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         combine(
             graph.catalogRepository.observeCategories(StreamKind.LIVE),
             selectedSource,
-        ) { raw, sourceId ->
+            settings.guideGroupOrder,
+        ) { raw, sourceId, savedOrder ->
             // Scope the category rail to the chosen provider, so a second playlist's categories show
             // on their own (cardiodoc's "keep sources separate"); null folds across every provider.
             val scoped = if (sourceId == null) raw else raw.filter { it.sourceId == sourceId }
-            foldCategories(scoped)
+            orderGroups(foldCategories(scoped), savedOrder)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private fun orderGroups(groups: List<CategoryGroup>, savedOrder: List<String>): List<CategoryGroup> {
+        if (savedOrder.isEmpty()) return groups
+        val rank = savedOrder.withIndex().associate { it.value to it.index }
+        return groups.sortedBy { rank[it.key] ?: Int.MAX_VALUE }
+    }
 
     /**
      * Folds codec-split provider categories into one logical [CategoryGroup] each — 'UK| GENERAL
@@ -630,6 +649,14 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val otherGroupsCategoryIds: List<String> = emptyList(),
     )
 
+    private data class GuideRowsCacheKey(val rowsKey: RowsKey, val sourceId: Long?, val windowStart: Long)
+
+    /** Small bounded hot cache: instant group switching without retaining the whole provider. */
+    private val guideRowsCache = object : LinkedHashMap<GuideRowsCacheKey, List<Row>>(4, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<GuideRowsCacheKey, List<Row>>?): Boolean =
+            size > GUIDE_ROWS_CACHE_ENTRIES
+    }
+
     private data class ManagerRowsKey(
         val source: Long?,
         val ids: List<String>?,
@@ -637,30 +664,6 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         val countryCode: String?,
         val quebecByCategoryId: Map<String, Boolean>,
     )
-
-    /**
-     * The whole guide window's programmes, grouped by their EPG channel id once — the single
-     * expensive step. Grouping the entire catalogue's programmes (hundreds of thousands of rows
-     * on a big provider) is what made every category tap slow, because it used to run inside the
-     * per-category flow and rebuild from scratch each time. Built here once, shared across every
-     * category switch, so a tap only has to regroup that category's channels — quick.
-     *
-     * Keyed on the half-hour bucket (not the raw minute tick) so it holds steady while you flick
-     * between categories and refreshes at most twice an hour; the underlying Room flow also
-     * re-emits on its own when an EPG sync lands new programmes.
-     */
-    @OptIn(ExperimentalCoroutinesApi::class)
-    private val programmeIndex: StateFlow<Map<String, List<Programme>>> =
-        // windowStartMillis is a StateFlow, which already conflates equal values — an explicit
-        // distinctUntilChanged() on it is a no-op (and a build error under our warnings-as-errors).
-        windowStartMillis
-            .flatMapLatest { windowStart ->
-                graph.epgRepository
-                    .observeWindow(windowStart, windowStart + GUIDE_LOOKAHEAD_MILLIS)
-                    .map { programmes -> programmes.groupBy { it.epgChannelId } }
-            }
-            .flowOn(Dispatchers.Default)
-            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     /** Guards the start-up loading bar so it shows once, on the first build, not on every tap. */
     @Volatile
@@ -670,7 +673,8 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
     val rows: StateFlow<List<Row>> =
         combine(selectedCategory, favouritesOnly, query, categoryGroups, hiddenCategoryIds) {
                 category, favs, q, groups, hidden ->
-            val group = category?.let { key -> groups.firstOrNull { it.key == key } }
+            val effectiveCategory = category ?: groups.firstOrNull()?.key
+            val group = effectiveCategory?.let { key -> groups.firstOrNull { it.key == key } }
             // Only the Canada shelf needs this — see RowsKey's doc comment on the field.
             val otherIds = if (group?.key == "CA") {
                 groups.filter { it.key != "CA" }.flatMap { it.ids }
@@ -684,6 +688,8 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         }
             .combine(selectedSource) { key, source -> key to source }
             .flatMapLatest { (key, source) ->
+                val cacheKey = GuideRowsCacheKey(key, source, windowStartMillis.value)
+                val cached = synchronized(guideRowsCache) { guideRowsCache[cacheKey] }
                 val channelFlow = when {
                     key.query.isNotBlank() -> graph.catalogRepository.searchChannels(key.query)
                     key.favs -> graph.catalogRepository.observeFavouriteChannels()
@@ -702,7 +708,24 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                 // rows) can take longer than 60s, and a tick landing mid-build would cancel and
                 // restart it via flatMapLatest so it would never finish. "Now" is captured per
                 // build instead; the guide's live progress bars advance off the screen's clock.
-                combine(channelFlow, programmeIndex) { channels, byEpgChannel ->
+                channelFlow.flatMapLatest { channels ->
+                    val epgChannelIds = channels
+                        .flatMap { it.epgCandidates }
+                        .distinct()
+                        .take(MAX_GUIDE_ROWS)
+                    val programmeFlow = if (epgChannelIds.isEmpty()) {
+                        flowOf(emptyList())
+                    } else {
+                        windowStartMillis.flatMapLatest { windowStart ->
+                            graph.epgRepository.observeWindowForChannels(
+                                epgChannelIds,
+                                windowStart,
+                                windowStart + GUIDE_LOOKAHEAD_MILLIS,
+                            )
+                        }
+                    }
+                    programmeFlow.map { programmes ->
+                        val byEpgChannel = programmes.groupBy { it.epgChannelId }
                     val now = System.currentTimeMillis()
                     // Scope to the chosen provider. The "All" branch already fetched only this source
                     // in SQL, so this is a no-op there; for favourites/search/category (which don't
@@ -767,8 +790,14 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
                         typeRankByCategoryId = key.typeRankByCategoryId,
                         countryCode = key.countryCode,
                         quebecByCategoryId = key.quebecByCategoryId,
-                    )
+                    ).also { builtRows ->
+                        if (builtRows.size <= GUIDE_ROWS_CACHE_MAX_ROWS) {
+                            synchronized(guideRowsCache) { guideRowsCache[cacheKey] = builtRows }
+                        }
+                    }
+                    }
                 }
+                    .let { fresh -> if (cached == null) fresh else fresh.onStart { emit(cached) } }
             }
             // Grouping thousands of channels against a 12-hour, all-feeds programme window is heavy
             // enough to freeze the UI for a big provider — a category tap that took minutes. Run the
@@ -874,10 +903,10 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
     /** A friendly, size-aware line for the load — a small provider gets a quick word, a huge one
      * gets a "bear with me". Used at start-up so the wait always says what it's doing. */
     private fun sizeMessage(count: Int): String = when {
-        count <= 0 -> "Building the guide…"
-        count < 2000 -> "Loading $count channels — a small one, this'll be quick."
-        count < 8000 -> "Loading $count channels — a fair few, give me a moment…"
-        else -> "Loading $count channels — a big one, bear with me, I'm on it…"
+        count <= 0 -> "Création du guide…"
+        count < 2000 -> "Chargement de $count chaînes — ce sera rapide."
+        count < 8000 -> "Chargement de $count chaînes — encore un instant…"
+        else -> "Chargement de $count chaînes — catalogue volumineux, veuillez patienter…"
     }
 
     val favourites: StateFlow<List<Channel>> =
@@ -986,9 +1015,10 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
         combine(
             graph.catalogRepository.observeCategories(StreamKind.LIVE),
             managerSelectedSource,
-        ) { raw, sourceId ->
+            settings.guideGroupOrder,
+        ) { raw, sourceId, savedOrder ->
             val scoped = if (sourceId == null) raw else raw.filter { it.sourceId == sourceId }
-            foldCategories(scoped)
+            orderGroups(foldCategories(scoped), savedOrder)
         }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /**
@@ -1028,6 +1058,10 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     fun selectManagerCategory(key: String?) { managerSelectedCategory.value = key }
+
+    fun moveManagerGroup(key: String, delta: Int) {
+        settings.moveGuideGroup(key, managerCategoryGroups.value.map { it.key }, delta)
+    }
 
     /** Hide or show a whole logical channel — every quality variant follows. */
     fun setRowHidden(row: Row, hidden: Boolean) {
@@ -1071,7 +1105,10 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private companion object {
-        const val GUIDE_LOOKAHEAD_MILLIS = 24 * 60 * 60 * 1000L  // a full day fits the grid
+        const val MAX_GUIDE_ROWS = 300
+        const val GUIDE_LOOKAHEAD_MILLIS = 6 * 60 * 60 * 1000L  // keep the initial TV index bounded
+        const val GUIDE_ROWS_CACHE_ENTRIES = 3
+        const val GUIDE_ROWS_CACHE_MAX_ROWS = 1_000
         const val DAY_MILLIS = 24 * 60 * 60 * 1000L
         const val GUIDE_MAX_DAYS = 6  // browse up to a week out, matching typical XMLTV depth
         const val HALF_HOUR_MILLIS = 30 * 60 * 1000L
@@ -1121,13 +1158,13 @@ class EpgViewModel(app: Application) : AndroidViewModel(app) {
     fun refresh() {
         if (_ui.value.syncing) return
         viewModelScope.launch {
-            _ui.value = _ui.value.copy(syncing = true, statusLine = "Downloading guides…")
+            _ui.value = _ui.value.copy(syncing = true, statusLine = "Téléchargement des guides…")
             val summary = graph.epgRepository.syncAll(System.currentTimeMillis(), force = true)
             _ui.value = _ui.value.copy(
                 syncing = false,
-                statusLine = "Guide matched ${summary.channelsMatched} of " +
-                    "${summary.channelsTotal} channels" +
-                    if (summary.feedsFailed > 0) " · ${summary.feedsFailed} feed(s) failed" else "",
+                statusLine = "Guide associé à ${summary.channelsMatched} chaînes sur " +
+                    "${summary.channelsTotal}" +
+                    if (summary.feedsFailed > 0) " · ${summary.feedsFailed} source(s) en échec" else "",
             )
         }
     }
@@ -1143,41 +1180,67 @@ class StreamingHomeViewModel(app: Application) : AndroidViewModel(app) {
         val next: Programme?,
     )
 
-    private val liveWindow = flow {
-        while (true) {
-            emit(System.currentTimeMillis())
-            delay(30_000L)
-        }
-    }.flatMapLatest { now ->
-        graph.epgRepository.observeWindow(now, now + 4 * 60 * 60_000L)
-            .map { programmes -> now to programmes }
-    }
-
     val recentLive: StateFlow<List<RecentLiveItem>> =
-        combine(settings.recentChannelIds, liveWindow) { ids, window -> ids to window }
-            .mapLatest { (ids, window) ->
-                val (nowMillis, programmes) = window
-                ids.mapNotNull { id ->
-                    val channel = graph.catalogRepository.channel(id) ?: return@mapNotNull null
-                    val candidates = channel.epgCandidates
-                    val matching = programmes
-                        .asSequence()
-                        .filter { it.epgChannelId in candidates }
-                        .sortedBy { it.startUtcMillis }
-                        .toList()
-                    RecentLiveItem(
-                        channel = channel,
-                        now = matching.firstOrNull { it.isLiveAt(nowMillis) },
-                        next = matching.firstOrNull { it.startUtcMillis >= nowMillis },
+        settings.recentChannelIds.flatMapLatest { ids ->
+            if (ids.isEmpty()) {
+                flowOf(emptyList())
+            } else {
+                // Resolve the tiny recent-channel set once, then ask Room only for their EPG ids.
+                // The old implementation loaded the complete four-hour programme window for all
+                // 12k channels every 30 seconds just to display a handful of dashboard cards. On
+                // Chromecast that query held a DB connection for 30+ seconds, allocated millions
+                // of objects and left the first frame black while GC fought it.
+                val channels = ids.mapNotNull { graph.catalogRepository.channel(it) }
+                val candidateIds = channels.flatMap(Channel::epgCandidates).distinct()
+                if (candidateIds.isEmpty()) {
+                    return@flatMapLatest flowOf(
+                        channels.map { RecentLiveItem(channel = it, now = null, next = null) },
                     )
                 }
+                flow {
+                    while (true) {
+                        emit(System.currentTimeMillis())
+                        delay(30_000L)
+                    }
+                }.flatMapLatest { now ->
+                    graph.epgRepository.observeWindowForChannels(
+                        candidateIds,
+                        now,
+                        now + 4 * 60 * 60_000L,
+                    )
+                        .map { programmes -> now to programmes }
+                }.mapLatest { (nowMillis, programmes) ->
+                    channels.map { channel ->
+                        val candidates = channel.epgCandidates
+                        val matching = programmes
+                            .asSequence()
+                            .filter { it.epgChannelId in candidates }
+                            .sortedBy { it.startUtcMillis }
+                            .toList()
+                        RecentLiveItem(
+                            channel = channel,
+                            now = matching.firstOrNull { it.isLiveAt(nowMillis) },
+                            next = matching.firstOrNull { it.startUtcMillis >= nowMillis },
+                        )
+                    }
+                }
             }
+        }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 }
+
+private const val TMDB_BROWSE_PAGES = 2
+private const val HOME_ROW_LIMIT = 20
 
 class VodViewModel(app: Application) : AndroidViewModel(app) {
     private val graph = ServiceLocator.get(app)
     private val settings = graph.settings
+
+    val favouriteMovies: StateFlow<List<Movie>> = graph.catalogRepository.observeFavouriteMovies()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val favouriteSeries: StateFlow<List<Series>> = graph.catalogRepository.observeFavouriteSeries()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** One card in the Continue Watching shelf — a movie or episode with somewhere left to go. */
     data class ResumeItem(
@@ -1195,39 +1258,95 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      *  explicitly asked not to show. */
     private val _catalogReady = MutableStateFlow(false)
     val catalogReady: StateFlow<Boolean> = _catalogReady.asStateFlow()
+    private val _movieBrowseReady = MutableStateFlow(false)
+    val movieBrowseReady: StateFlow<Boolean> = _movieBrowseReady.asStateFlow()
+    private val _seriesBrowseReady = MutableStateFlow(false)
+    val seriesBrowseReady: StateFlow<Boolean> = _seriesBrowseReady.asStateFlow()
 
-    private fun tmdbRow(fetch: suspend () -> List<TmdbListItem>): StateFlow<List<TmdbListItem>> =
+    private var theatricalMovieIds: Set<String>? = null
+    private val theatricalMovieIdsMutex = Mutex()
+
+    /** TMDB's `now_playing` list is used only as an exclusion list: the home catalog should feel
+     *  like a streaming service, not advertise the current cinema slate. Cached for this ViewModel
+     *  so every movie shelf shares one request. */
+    private suspend fun currentTheatricalMovieIds(): Set<String> = theatricalMovieIdsMutex.withLock {
+        theatricalMovieIds ?: graph.catalogRepository.tmdbRecentlyReleased(isMovie = true)
+            .mapTo(linkedSetOf()) { it.tmdbId }
+            .also { theatricalMovieIds = it }
+    }
+
+    private suspend fun filterHomeItems(
+        items: List<TmdbListItem>,
+        excludeTheatricalMovies: Boolean,
+    ): List<TmdbListItem> {
+        val available = graph.catalogRepository.filterAvailable(items)
+        if (!excludeTheatricalMovies) return available
+        val theatrical = currentTheatricalMovieIds()
+        return available.filterNot { it.isMovie && it.tmdbId in theatrical }
+    }
+
+    private fun tmdbRow(
+        isMovie: Boolean,
+        fetch: suspend (page: Int) -> List<TmdbListItem>,
+    ): StateFlow<List<TmdbListItem>> =
         catalogReady.filter { it }.take(1)
-            .map { graph.catalogRepository.filterAvailable(fetch()) }
+            .map {
+                val candidates = (1..TMDB_BROWSE_PAGES)
+                    .flatMap { page -> fetch(page) }
+                    .distinctBy { item -> item.tmdbId }
+                filterHomeItems(candidates, excludeTheatricalMovies = isMovie).take(HOME_ROW_LIMIT)
+            }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     /** This week's TMDB-trending movies, for the Home "Tendances" rail — narrowed to titles this
      *  device's provider(s) actually carry (see [CatalogRepository.filterAvailable]), and not
      *  fetched at all until [catalogReady] — a poster here must always be something the person can
      *  actually press play on. Loaded once per ViewModel lifetime, matching every other row below. */
-    val tmdbTrendingMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTrending(isMovie = true) }
-    val tmdbTrendingSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTrending(isMovie = false) }
-    val tmdbPopularMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbPopular(isMovie = true) }
-    val tmdbPopularSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbPopular(isMovie = false) }
-    val tmdbNewMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbRecentlyReleased(isMovie = true) }
-    val tmdbNewSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbRecentlyReleased(isMovie = false) }
-    val tmdbTopRatedMovies: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTopRated(isMovie = true) }
-    val tmdbTopRatedSeries: StateFlow<List<TmdbListItem>> = tmdbRow { graph.catalogRepository.tmdbTopRated(isMovie = false) }
+    val tmdbTrendingMovies: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = true) { page -> graph.catalogRepository.tmdbTrending(isMovie = true, page = page) }
+    val tmdbTrendingSeries: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = false) { page -> graph.catalogRepository.tmdbTrending(isMovie = false, page = page) }
+    val tmdbPopularMovies: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = true) { page -> graph.catalogRepository.tmdbPopular(isMovie = true, page = page) }
+    val tmdbPopularSeries: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = false) { page -> graph.catalogRepository.tmdbPopular(isMovie = false, page = page) }
+    val tmdbNewMovies: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = true) { page -> graph.catalogRepository.tmdbRecentlyReleased(isMovie = true, page = page) }
+    val tmdbNewSeries: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = false) { page -> graph.catalogRepository.tmdbRecentlyReleased(isMovie = false, page = page) }
+    val tmdbTopRatedMovies: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = true) { page -> graph.catalogRepository.tmdbTopRated(isMovie = true, page = page) }
+    val tmdbTopRatedSeries: StateFlow<List<TmdbListItem>> = tmdbRow(isMovie = false) { page -> graph.catalogRepository.tmdbTopRated(isMovie = false, page = page) }
 
     /** One shelf per TMDB genre — Action, Comédie, Horreur, etc. — the Netflix-style genre rail
      *  under the curated Trending/Popular/New/Top-rated rows, same availability filter per shelf. */
     val tmdbGenreRowsMovies: StateFlow<List<GenreGroup<TmdbListItem>>> =
         catalogReady.filter { it }.take(1)
-            .map { filterGenreRows(graph.catalogRepository.tmdbGenreRows(isMovie = true)) }
+            .map {
+                filterGenreRows(
+                    graph.catalogRepository.tmdbGenreRows(isMovie = true),
+                    excludeTheatricalMovies = true,
+                ).also { _movieBrowseReady.value = true }
+            }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
     val tmdbGenreRowsSeries: StateFlow<List<GenreGroup<TmdbListItem>>> =
         catalogReady.filter { it }.take(1)
-            .map { filterGenreRows(graph.catalogRepository.tmdbGenreRows(isMovie = false)) }
+            .map {
+                filterGenreRows(
+                    graph.catalogRepository.tmdbGenreRows(isMovie = false),
+                    excludeTheatricalMovies = false,
+                ).also { _seriesBrowseReady.value = true }
+            }
             .stateIn(viewModelScope, SharingStarted.Lazily, emptyList())
 
-    private suspend fun filterGenreRows(rows: List<GenreGroup<TmdbListItem>>): List<GenreGroup<TmdbListItem>> =
-        rows.map { it.copy(items = graph.catalogRepository.filterAvailable(it.items)) }.filter { it.items.isNotEmpty() }
+    private suspend fun filterGenreRows(
+        rows: List<GenreGroup<TmdbListItem>>,
+        excludeTheatricalMovies: Boolean,
+    ): List<GenreGroup<TmdbListItem>> {
+        // One availability pass for every genre, rather than re-reading the local catalogue once
+        // per row. This keeps the larger Netflix-style set of shelves fast even on 30k-title lists.
+        val availableIds = filterHomeItems(
+            rows.flatMap { it.items }.distinctBy { it.tmdbId },
+            excludeTheatricalMovies,
+        ).mapTo(hashSetOf()) { it.tmdbId }
+        return rows
+            .map { row -> row.copy(items = row.items.filter { it.tmdbId in availableIds }.take(HOME_ROW_LIMIT)) }
+            .filter { it.items.isNotEmpty() }
+    }
 
     fun tmdbConfigured(): Boolean = graph.catalogRepository.tmdbConfigured()
 
@@ -1389,17 +1508,6 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
      *  bottom — declared after `init`, this mutex would still be null when the first collect runs. */
     private val homeFeedsMutex = Mutex()
 
-    init {
-        // The home feeds are per profile (Recommended) and per catalogue (the genre rows). Rebuild
-        // them when the active profile changes — and once at start. Routed through the guarded
-        // [loadHomeFeeds] so a profile switch triggers exactly one library scan, and re-opening the
-        // tab with the same profile and an unchanged catalogue triggers none. Reads an empty result
-        // until a VOD sync has populated the catalogue; [ensureVodLoaded] re-runs it once one has.
-        viewModelScope.launch {
-            settings.activeProfileId.collect { loadHomeFeeds() }
-        }
-    }
-
     /**
      * Recomputes the computed home rows (Recommended + by-genre) from a SINGLE scan of the library.
      *
@@ -1465,17 +1573,19 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
     }
 
     private suspend fun loadVodFromDiskOrBootstrap() {
-        val haveCatalogue = runCatching {
-            graph.catalogRepository.movieCount() + graph.catalogRepository.seriesCount()
-        }.getOrDefault(0) > 0
+        val movieCount = runCatching { graph.catalogRepository.movieCount() }.getOrDefault(0)
+        val seriesCount = runCatching { graph.catalogRepository.seriesCount() }.getOrDefault(0)
+        val needMovies = settings.moviesEnabled.value && movieCount == 0
+        val needSeries = settings.seriesEnabled.value && seriesCount == 0
 
-        if (haveCatalogue) {
-            loadHomeFeeds()
+        if (!needMovies && !needSeries) {
             _catalogReady.value = true
             return
         }
 
-        refreshVodNow()
+        // Only fetch the missing half. A completed 30k-film catalogue must not be downloaded again
+        // just because the previous series pass was interrupted or never started.
+        refreshVodNow(includeMovies = needMovies, includeSeries = needSeries)
         _catalogReady.value = true
     }
 
@@ -1485,15 +1595,23 @@ class VodViewModel(app: Application) : AndroidViewModel(app) {
         viewModelScope.launch { refreshVodNow() }
     }
 
-    private suspend fun refreshVodNow() {
+    private suspend fun refreshVodNow(
+        includeMovies: Boolean = settings.moviesEnabled.value,
+        includeSeries: Boolean = settings.seriesEnabled.value,
+    ) {
         val now = System.currentTimeMillis()
         _vodLoading.value = true
-        StatusBus.set("Updating catalogue…")
+        StatusBus.set("Mise à jour du catalogue…")
         val synced = try {
             graph.sourceRepository.enabled()
                 .map { source ->
-                    graph.catalogRepository.syncVod(source, now) { movies, series ->
-                        StatusBus.set("Updating catalogue… $movies movies, $series series")
+                    graph.catalogRepository.syncVod(
+                        source = source,
+                        nowUtcMillis = now,
+                        includeMovies = includeMovies,
+                        includeSeries = includeSeries,
+                    ) { movies, series ->
+                        StatusBus.set("Mise à jour du catalogue… $movies films, $series séries")
                     }
                 }
                 .all { it.isSuccess }

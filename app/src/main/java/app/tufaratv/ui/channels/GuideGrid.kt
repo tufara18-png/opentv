@@ -111,7 +111,7 @@ fun GuideGrid(
             contentPadding = PaddingValues(bottom = 16.dp),
             verticalArrangement = Arrangement.spacedBy(3.dp),
         ) {
-            items(rows, key = { it.key }) { row ->
+            items(rows, key = { it.key }, contentType = { "guide-row" }) { row ->
                 GuideRow(
                     row = row,
                     windowStartMillis = windowStartMillis,
@@ -154,7 +154,7 @@ fun ChannelList(
         contentPadding = PaddingValues(vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(3.dp),
     ) {
-        items(rows, key = { it.key }) { row ->
+        items(rows, key = { it.key }, contentType = { "channel-row" }) { row ->
             ChannelListRow(
                 row = row,
                 nowMillis = now,

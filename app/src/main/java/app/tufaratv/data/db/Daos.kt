@@ -95,9 +95,10 @@ interface ChannelDao {
         SELECT * FROM channels
         WHERE hidden = 0 AND categoryId IN (:categoryIds)
         ORDER BY sortIndex, displayName
+        LIMIT :limit
         """
     )
-    fun observeInCategories(categoryIds: List<String>): Flow<List<Channel>>
+    fun observeInCategories(categoryIds: List<String>, limit: Int = 300): Flow<List<Channel>>
 
     /**
      * Channels across a set of categories INCLUDING hidden ones, optionally scoped to one source
@@ -405,6 +406,21 @@ interface ProgrammeDao {
     )
     fun observeWindow(fromUtcMillis: Long, toUtcMillis: Long): Flow<List<Programme>>
 
+    @Query(
+        """
+        SELECT * FROM programmes
+        WHERE epgChannelId IN (:epgChannelIds)
+          AND endUtcMillis > :fromUtcMillis
+          AND startUtcMillis < :toUtcMillis
+        ORDER BY epgChannelId, startUtcMillis
+        """
+    )
+    fun observeWindowForChannels(
+        epgChannelIds: List<String>,
+        fromUtcMillis: Long,
+        toUtcMillis: Long,
+    ): Flow<List<Programme>>
+
     /** What is on right now, for the channel list's "now playing" line. */
     @Query(
         """
@@ -430,7 +446,11 @@ interface ProgrammeDao {
     @Query("SELECT DISTINCT epgChannelId FROM programmes")
     suspend fun channelIdsWithProgrammes(): List<String>
 
-    @Upsert
+    // Programme identity is the unique (feedId, epgChannelId, startUtcMillis) index. REPLACE
+    // emits one SQLite statement for an existing airing; Room's generic @Upsert first attempted
+    // an INSERT (raising a constraint exception) and then UPDATEd it. On a 300k-row XMLTV that
+    // doubled statement count and exception allocation on low-end TV hardware.
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun upsertAll(programmes: List<Programme>)
 
     /** Housekeeping: drop anything that finished before the retention cut-off. */
@@ -564,6 +584,9 @@ interface SeriesDao {
         """
     )
     fun observe(categoryId: String?): Flow<List<Series>>
+
+    @Query("SELECT * FROM series WHERE favourite = 1 ORDER BY name")
+    fun observeFavourites(): Flow<List<Series>>
 
     @Query("SELECT * FROM series WHERE name LIKE '%' || :query || '%' ORDER BY name LIMIT :limit")
     fun search(query: String, limit: Int = 200): Flow<List<Series>>
@@ -881,6 +904,8 @@ interface ReminderDao {
  */
 @Dao
 interface CanonicalMovieDao {
+    @Query("SELECT tmdbId FROM canonical_content WHERE kind = 'MOVIE' AND tmdbId IS NOT NULL AND tmdbId != ''")
+    suspend fun tmdbIds(): List<String>
     @Query("SELECT * FROM canonical_content WHERE kind = 'MOVIE' ORDER BY addedMillis DESC")
     fun observeAll(): Flow<List<CanonicalContent>>
 
@@ -907,6 +932,16 @@ interface CanonicalMovieDao {
 
     @Query("SELECT * FROM canonical_content WHERE kind = 'MOVIE' AND tmdbId = :tmdbId LIMIT 1")
     suspend fun findByTmdbId(tmdbId: String): CanonicalContent?
+
+    /** Indexed availability lookup for the small set of TMDB posters currently requested. */
+    @Query(
+        "SELECT * FROM canonical_content WHERE kind = 'MOVIE' " +
+            "AND (tmdbId IN (:tmdbIds) OR titleKey IN (:titleKeys))"
+    )
+    suspend fun availabilityCandidates(
+        tmdbIds: List<String>,
+        titleKeys: List<String>,
+    ): List<CanonicalContent>
 
     /** Every canonical movie sharing [titleKey], any year (including none) — `CanonicalMatcher`
      *  decides year compatibility itself rather than encoding that ambiguity rule in SQL. */
@@ -956,6 +991,8 @@ interface CanonicalMovieDao {
  */
 @Dao
 interface CanonicalSeriesDao {
+    @Query("SELECT tmdbId FROM canonical_content WHERE kind = 'SERIES' AND tmdbId IS NOT NULL AND tmdbId != ''")
+    suspend fun tmdbIds(): List<String>
     @Query("SELECT * FROM canonical_content WHERE kind = 'SERIES' ORDER BY addedMillis DESC")
     fun observeAll(): Flow<List<CanonicalContent>>
 
@@ -980,6 +1017,15 @@ interface CanonicalSeriesDao {
 
     @Query("SELECT * FROM canonical_content WHERE kind = 'SERIES' AND tmdbId = :tmdbId LIMIT 1")
     suspend fun findByTmdbId(tmdbId: String): CanonicalContent?
+
+    @Query(
+        "SELECT * FROM canonical_content WHERE kind = 'SERIES' " +
+            "AND (tmdbId IN (:tmdbIds) OR titleKey IN (:titleKeys))"
+    )
+    suspend fun availabilityCandidates(
+        tmdbIds: List<String>,
+        titleKeys: List<String>,
+    ): List<CanonicalContent>
 
     @Query("SELECT * FROM canonical_content WHERE kind = 'SERIES' AND titleKey = :titleKey")
     suspend fun findAllByTitleKey(titleKey: String): List<CanonicalContent>

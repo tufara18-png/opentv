@@ -54,8 +54,23 @@ class AppSettings private constructor(context: Context) {
     private val _guidePreviewVideo = MutableStateFlow(prefs.getBoolean(KEY_PREVIEW_VIDEO, true))
     val guidePreviewVideo: StateFlow<Boolean> = _guidePreviewVideo.asStateFlow()
 
-    /** Whether the guide preview plays sound (off by default — quieter while browsing). */
-    private val _guidePreviewSound = MutableStateFlow(prefs.getBoolean(KEY_PREVIEW_SOUND, false))
+    /**
+     * Whether the guide preview plays sound. Live TV is the active content, not a decorative
+     * trailer, so audio is on by default. Migrate existing installs once: the old default was
+     * silent, which made a freshly selected channel look broken. After migration the setting is
+     * still respected, so somebody who explicitly mutes it later stays muted.
+     */
+    private val _guidePreviewSound = MutableStateFlow(
+        if (!prefs.getBoolean(KEY_PREVIEW_SOUND_DEFAULT_MIGRATED, false)) {
+            prefs.edit()
+                .putBoolean(KEY_PREVIEW_SOUND, true)
+                .putBoolean(KEY_PREVIEW_SOUND_DEFAULT_MIGRATED, true)
+                .apply()
+            true
+        } else {
+            prefs.getBoolean(KEY_PREVIEW_SOUND, true)
+        },
+    )
     val guidePreviewSound: StateFlow<Boolean> = _guidePreviewSound.asStateFlow()
 
     /** The profile whose watch history is active. Defaults to the built-in profile (id 1). */
@@ -90,6 +105,14 @@ class AppSettings private constructor(context: Context) {
         MutableStateFlow(prefs.getStringSet(KEY_HIDDEN_GROUPS, emptySet())!!.toSet())
     val manuallyHiddenGroups: StateFlow<Set<String>> = _manuallyHiddenGroups.asStateFlow()
 
+    /** User-defined order of logical live-TV groups, stored by stable group key. */
+    private val _guideGroupOrder = MutableStateFlow(
+        runCatching {
+            addonJson.decodeFromString<List<String>>(prefs.getString(KEY_GUIDE_GROUP_ORDER, "[]") ?: "[]")
+        }.getOrDefault(emptyList()),
+    )
+    val guideGroupOrder: StateFlow<List<String>> = _guideGroupOrder.asStateFlow()
+
     /**
      * Session unlock. Deliberately *not* persisted: revealing hidden categories lasts until the
      * app is next launched, so a child restarting the app is back behind the lock.
@@ -121,6 +144,18 @@ class AppSettings private constructor(context: Context) {
     fun setManuallyHiddenGroups(keys: Set<String>) {
         prefs.edit().putStringSet(KEY_HIDDEN_GROUPS, keys).apply()
         _manuallyHiddenGroups.value = keys.toSet()
+    }
+
+    fun moveGuideGroup(key: String, visibleKeys: List<String>, delta: Int) {
+        val ordered = (_guideGroupOrder.value.filter { it in visibleKeys } +
+            visibleKeys.filterNot { it in _guideGroupOrder.value }).toMutableList()
+        val from = ordered.indexOf(key)
+        if (from < 0) return
+        val to = (from + delta).coerceIn(0, ordered.lastIndex)
+        if (from == to) return
+        ordered.add(to, ordered.removeAt(from))
+        prefs.edit().putString(KEY_GUIDE_GROUP_ORDER, addonJson.encodeToString(ordered)).apply()
+        _guideGroupOrder.value = ordered
     }
 
     fun setHiddenUnlocked(unlocked: Boolean) {
@@ -434,6 +469,11 @@ class AppSettings private constructor(context: Context) {
         get() = prefs.getBoolean(KEY_LIBRARY_PREPARED, true)
         set(value) { prefs.edit().putBoolean(KEY_LIBRARY_PREPARED, value).apply() }
 
+    /** The expensive regional-EPG detection scans the channel catalogue once, never per launch. */
+    var epgAutoRegionInitialized: Boolean
+        get() = prefs.getBoolean(KEY_EPG_AUTO_REGION_INITIALIZED, false)
+        set(value) { prefs.edit().putBoolean(KEY_EPG_AUTO_REGION_INITIALIZED, value).apply() }
+
     /**
      * The TMDB API key (v3 auth) used to fill in artwork/metadata a provider left blank, and to
      * drive the TMDB-first Movies/Shows catalogue. Ships with a default key baked into the app —
@@ -549,9 +589,12 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_SUBTITLES = "subtitles_enabled"
         private const val KEY_PREVIEW_VIDEO = "guide_preview_video"
         private const val KEY_PREVIEW_SOUND = "guide_preview_sound"
+        private const val KEY_PREVIEW_SOUND_DEFAULT_MIGRATED = "guide_preview_sound_default_migrated_v2"
+        private const val KEY_EPG_AUTO_REGION_INITIALIZED = "epg_auto_region_initialized"
         private const val KEY_PIN_HASH = "parental_pin_hash"
         private const val KEY_HIDDEN_CATS = "hidden_categories"
         private const val KEY_HIDDEN_GROUPS = "manually_hidden_groups"
+        private const val KEY_GUIDE_GROUP_ORDER = "guide_group_order"
         private const val KEY_ACTIVE_PROFILE = "active_profile_id"
         private const val KEY_RESUME_LAST = "resume_last_channel"
         private const val KEY_CONTENT_LIVE = "content_live"

@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -35,6 +36,10 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -49,10 +54,12 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material.icons.filled.HighQuality
 import androidx.compose.material.icons.filled.Pause
 import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.PlaylistPlay
 import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
+import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Text
@@ -75,6 +82,7 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
@@ -84,6 +92,7 @@ import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -103,10 +112,12 @@ import app.tufaratv.data.repo.PlayerLadder
 import app.tufaratv.data.repo.SourceGroup
 import app.tufaratv.data.repo.SourceSelector
 import app.tufaratv.data.repo.SourceVariant
+import app.tufaratv.data.model.Episode
 import app.tufaratv.player.EngineState
 import app.tufaratv.player.Media3Engine
 import app.tufaratv.player.PlayerController
 import app.tufaratv.player.PlayerCoordinator
+import coil.compose.AsyncImage
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -264,6 +275,9 @@ fun VodPlayerScreen(
     var controlsVisible by remember { mutableStateOf(true) }
     var interaction by remember { androidx.compose.runtime.mutableIntStateOf(0) }
     var nextEpisode by remember(mediaKey) { mutableStateOf<NextEpisodePlayback?>(null) }
+    var currentEpisodeId by remember(mediaKey) { mutableStateOf<Long?>(null) }
+    var seriesEpisodes by remember(mediaKey) { mutableStateOf<List<Episode>>(emptyList()) }
+    var episodeProgress by remember(mediaKey) { mutableStateOf<Map<Long, Float>>(emptyMap()) }
     var autoAdvanced by remember(mediaKey) { mutableStateOf(false) }
     val barFocus = remember { FocusRequester() }
     val rootFocus = remember { FocusRequester() }
@@ -308,7 +322,20 @@ fun VodPlayerScreen(
             ?.takeIf { !it.isFinished }?.positionMillis ?: 0L
         val localEpisodeId = mediaKey.takeIf { it.startsWith("ep:") }
             ?.substringAfter(':')?.toLongOrNull()
+        currentEpisodeId = localEpisodeId
         nextEpisode = localEpisodeId?.let { graph.catalogRepository.nextEpisode(it) }
+        seriesEpisodes = localEpisodeId?.let { graph.catalogRepository.seriesEpisodes(it) }.orEmpty()
+        if (localEpisodeId != null) {
+            episodeProgress = graph.playbackPositions.forProfile(settings.activeProfileId.value)
+                .asSequence()
+                .filter { it.mediaKey.startsWith("ep:") && it.durationMillis > 0 }
+                .mapNotNull { position ->
+                    position.mediaKey.substringAfter(':').toLongOrNull()?.let { id ->
+                        id to (position.positionMillis.toFloat() / position.durationMillis).coerceIn(0f, 1f)
+                    }
+                }
+                .toMap()
+        }
         while (isActive) {
             delay(15_000)
             savePosition()
@@ -498,7 +525,31 @@ fun VodPlayerScreen(
                     )
                     .padding(horizontal = 28.dp, vertical = 20.dp),
             ) {
-                if (vodPanel == VodPanel.SUBTITLES || vodPanel == VodPanel.AUDIO) {
+                if (vodPanel == VodPanel.EPISODES) {
+                    EpisodePanel(
+                        episodes = seriesEpisodes,
+                        currentEpisodeId = currentEpisodeId,
+                        progress = episodeProgress,
+                        currentProgress = if (durationMs > 0) {
+                            (positionMs.toFloat() / durationMs).coerceIn(0f, 1f)
+                        } else {
+                            0f
+                        },
+                        firstFocus = panelFocus,
+                        onPick = { episode ->
+                            if (episode.id == currentEpisodeId) {
+                                vodPanel = VodPanel.NONE
+                                interaction++
+                            } else {
+                                scope.launch {
+                                    savePosition()
+                                    graph.catalogRepository.episodePlayback(episode.id)?.let(onNextEpisode)
+                                }
+                            }
+                        },
+                    )
+                    Spacer(Modifier.height(16.dp))
+                } else if (vodPanel == VodPanel.SUBTITLES || vodPanel == VodPanel.AUDIO) {
                     TrackPanel(
                         panel = vodPanel,
                         controller = controller,
@@ -609,6 +660,13 @@ fun VodPlayerScreen(
                             }
                         }
                     }
+                    if (seriesEpisodes.isNotEmpty()) {
+                        Spacer(Modifier.width(10.dp))
+                        VodChip(Icons.Filled.PlaylistPlay, stringResource(R.string.player_episodes)) {
+                            vodPanel = if (vodPanel == VodPanel.EPISODES) VodPanel.NONE else VodPanel.EPISODES
+                            interaction++
+                        }
+                    }
                     Spacer(Modifier.width(20.dp))
                     VodChip(Icons.Filled.ClosedCaption, stringResource(R.string.player_subtitles)) {
                         vodPanel = if (vodPanel == VodPanel.SUBTITLES) VodPanel.NONE else VodPanel.SUBTITLES
@@ -672,7 +730,173 @@ private fun VodChip(
     }
 }
 
-private enum class VodPanel { NONE, SUBTITLES, AUDIO, SOURCE, QUALITY }
+private enum class VodPanel { NONE, EPISODES, SUBTITLES, AUDIO, SOURCE, QUALITY }
+
+/**
+ * Netflix/TiviMate-style episode drawer rendered over the running video.
+ *
+ * Everything here is local and lazy: [LazyColumn] only composes visible rows, and images use
+ * Coil's normal memory/disk cache. Merely opening the drawer never restarts or pauses playback.
+ */
+@Composable
+private fun EpisodePanel(
+    episodes: List<Episode>,
+    currentEpisodeId: Long?,
+    progress: Map<Long, Float>,
+    currentProgress: Float,
+    firstFocus: FocusRequester,
+    onPick: (Episode) -> Unit,
+) {
+    val seasons = remember(episodes) {
+        episodes.groupBy(Episode::season)
+            .mapValues { (_, values) -> values.sortedBy(Episode::episodeNumber) }
+            .toSortedMap()
+    }
+    val currentSeason = episodes.firstOrNull { it.id == currentEpisodeId }?.season
+    var selectedSeason by remember(episodes, currentEpisodeId) {
+        mutableStateOf(currentSeason ?: seasons.keys.firstOrNull())
+    }
+    val visibleEpisodes = seasons[selectedSeason].orEmpty()
+    val currentIndex = visibleEpisodes.indexOfFirst { it.id == currentEpisodeId }.coerceAtLeast(0)
+    val listState = rememberLazyListState(initialFirstVisibleItemIndex = currentIndex)
+    LaunchedEffect(selectedSeason) {
+        listState.scrollToItem(currentIndex)
+    }
+
+    Column(
+        Modifier
+            .fillMaxWidth()
+            .heightIn(max = 430.dp)
+            .clip(RoundedCornerShape(14.dp))
+            .background(Color.Black.copy(alpha = 0.94f))
+            .padding(horizontal = 14.dp, vertical = 12.dp),
+    ) {
+        Text(
+            stringResource(R.string.player_episodes),
+            style = MaterialTheme.typography.titleLarge,
+            color = Color.White,
+            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+        )
+        Spacer(Modifier.height(6.dp))
+        if (seasons.size > 1) {
+            LazyRow(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            ) {
+                items(seasons.keys.toList(), key = { it }) { season ->
+                    PlayerSeasonChip(
+                        label = stringResource(R.string.vod_season, season),
+                        selected = season == selectedSeason,
+                        onClick = { selectedSeason = season },
+                    )
+                }
+            }
+            Spacer(Modifier.height(8.dp))
+        }
+        LazyColumn(state = listState, modifier = Modifier.fillMaxWidth()) {
+            items(visibleEpisodes, key = Episode::id) { episode ->
+                val isCurrent = episode.id == currentEpisodeId
+                var focused by remember(episode.id) { mutableStateOf(false) }
+                val rowProgress = if (isCurrent) currentProgress else progress[episode.id] ?: 0f
+                val background = when {
+                    focused -> MaterialTheme.colorScheme.primary.copy(alpha = 0.9f)
+                    isCurrent -> Color.White.copy(alpha = 0.16f)
+                    else -> Color.Transparent
+                }
+                val content = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White
+
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .then(if (isCurrent) Modifier.focusRequester(firstFocus) else Modifier)
+                        .onFocusChanged { focused = it.isFocused }
+                        .clip(RoundedCornerShape(10.dp))
+                        .background(background)
+                        .clickable { onPick(episode) }
+                        .padding(10.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(
+                        episode.episodeNumber.toString(),
+                        style = MaterialTheme.typography.headlineMedium,
+                        color = content.copy(alpha = 0.75f),
+                        modifier = Modifier.width(52.dp),
+                        textAlign = TextAlign.Center,
+                    )
+                    AsyncImage(
+                        model = episode.stillUrl,
+                        contentDescription = episode.title,
+                        contentScale = ContentScale.Crop,
+                        modifier = Modifier.width(170.dp).height(96.dp).clip(RoundedCornerShape(8.dp)),
+                    )
+                    Spacer(Modifier.width(16.dp))
+                    Column(Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Text(
+                                "S${episode.season}E${episode.episodeNumber} · ${episode.title}",
+                                style = MaterialTheme.typography.titleMedium,
+                                color = content,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f),
+                            )
+                            episode.durationSeconds?.takeIf { it > 0 }?.let { seconds ->
+                                Spacer(Modifier.width(12.dp))
+                                Text(formatDuration(seconds * 1_000L), color = content.copy(alpha = 0.7f))
+                            }
+                        }
+                        if (isCurrent) {
+                            Text(
+                                stringResource(R.string.player_now_playing),
+                                style = MaterialTheme.typography.labelLarge,
+                                color = content.copy(alpha = 0.78f),
+                            )
+                        }
+                        episode.plot?.takeIf(String::isNotBlank)?.let { plot ->
+                            Spacer(Modifier.height(4.dp))
+                            Text(
+                                plot,
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = content.copy(alpha = 0.7f),
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (rowProgress > 0f) {
+                            Spacer(Modifier.height(7.dp))
+                            LinearProgressIndicator(
+                                progress = { rowProgress },
+                                modifier = Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)),
+                            )
+                        }
+                    }
+                }
+                Spacer(Modifier.height(4.dp))
+            }
+        }
+    }
+}
+
+@Composable
+private fun PlayerSeasonChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val background = when {
+        focused -> MaterialTheme.colorScheme.primary
+        selected -> Color.White.copy(alpha = 0.2f)
+        else -> Color.White.copy(alpha = 0.08f)
+    }
+    Text(
+        text = label,
+        color = if (focused) MaterialTheme.colorScheme.onPrimary else Color.White,
+        style = MaterialTheme.typography.titleSmall,
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(999.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
+}
 
 /**
  * The Source and Quality panels — two independent axes (see `SourceSelector`/`QualitySelector`),

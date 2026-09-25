@@ -2,17 +2,49 @@
 <!-- TufaraTV UI translation. Auto-assembled; English fallback for any gap. -->
 <resources>
     <string name="app_name">TufaraTV</string>
+    <string name="nav_home">Accueil</string>
+    <string name="home_recent_live">Dernières chaînes regardées</string>
+    <string name="home_trending_movies">Films tendance</string>
+    <string name="home_trending_series">Séries tendance</string>
+    <string name="home_featured">À LA UNE POUR VOUS</string>
+    <string name="home_view_title">Voir le titre</string>
+    <string name="home_popular_movies">Films populaires</string>
+    <string name="home_top_series">Séries les mieux notées</string>
+    <string name="home_recent_movies">Films ajoutés récemment</string>
+    <string name="home_recent_series">Séries ajoutées récemment</string>
     <string name="common_done">Terminé</string>
     <string name="common_cancel">Annuler</string>
     <string name="common_back">Retour</string>
     <string name="common_save">Enregistrer</string>
     <string name="common_remove">Retirer</string>
+    <string name="common_edit">Modifier</string>
     <string name="common_play">Lecture</string>
     <string name="common_stop">Arrêt</string>
     <string name="common_delete">Supprimer</string>
     <string name="common_selected">Sélectionné</string>
+    <string name="exit_title">Quitter TufaraTV ?</string>
+    <string name="exit_body">Vous reviendrez à l’accueil de votre téléviseur.</string>
+    <string name="exit_confirm">Quitter</string>
+    <string name="exit_cancel">Rester</string>
     <string name="common_favourite">Favori</string>
     <string name="common_remove_favourite">Retirer des favoris</string>
+    <string name="player_next_episode">Épisode suivant</string>
+    <string name="player_episodes">Épisodes</string>
+    <string name="player_now_playing">En cours de lecture</string>
+    <string name="player_source">Source</string>
+    <string name="player_source_auto">Auto</string>
+    <string name="settings_edit_provider_title">Modifier le fournisseur</string>
+    <string name="recset_pw_show">Afficher le mot de passe</string>
+    <string name="recset_pw_hide">Masquer le mot de passe</string>
+    <string name="about_support_body">TufaraTV est gratuit et le restera. Si l’application vous est utile et que vous souhaitez contribuer, GitHub Sponsors ou un don ponctuel aide à financer les mises à jour, les corrections et le soutien. Cette contribution reste entièrement facultative.</string>
+    <string name="about_sponsor_github">GitHub Sponsors</string>
+    <string name="about_donate_paypal">Faire un don par PayPal</string>
+    <string name="vod_first_sync_title">Création de votre catalogue…</string>
+    <string name="rec_watching_live_badge">Enregistrement — en direct</string>
+    <string name="rec_live_warn_title">Enregistrement en cours</string>
+    <string name="rec_live_warn_body">Votre abonnement autorise une seule connexion. Regarder la TV maintenant arrêtera l’enregistrement de « %1$s ».</string>
+    <string name="rec_live_warn_watch">Regarder la TV et arrêter l’enregistrement</string>
+    <string name="rec_live_warn_keep">Continuer l’enregistrement</string>
     <string name="common_keep_typing">Continuez à taper…</string>
     <string name="common_channels">Chaînes</string>
     <string name="common_try_again">Réessayer</string>
@@ -384,6 +416,7 @@
     <string name="vod_all">Tout</string>
     <string name="vod_search_hint">Rechercher des films et séries</string>
     <string name="vod_continue_watching">Continuer à regarder</string>
+    <string name="vod_favourites">Mes favoris</string>
     <string name="vod_large_provider_note">Un fournisseur avec beaucoup de contenu peut prendre quelques minutes la première fois.</string>
     <string name="vod_recommended">Recommandé pour vous</string>
     <string name="vod_tmdb_trending">Tendances</string>
@@ -445,4 +478,9 @@
     <string name="settings_tmdb_save">Enregistrer la clé</string>
     <string name="settings_tmdb_saved">Clé TMDB enregistrée</string>
     <string name="settings_tmdb_active">Active</string>
+    <string name="channels_manager_move_group_up">Monter le groupe</string>
+    <string name="channels_manager_move_group_down">Descendre le groupe</string>
+    <string name="vod_favourites_movies">Films favoris</string>
+    <string name="vod_favourites_series">Séries favorites</string>
+    <string name="player_programmes">Programmes</string>
 </resources>

@@ -152,6 +152,6 @@ class PlayerCoordinator(
     }
 
     private companion object {
-        const val NO_PLAYABLE_SOURCE = "No playable source worked for this title."
+        const val NO_PLAYABLE_SOURCE = "Aucune source lisible n’a fonctionné pour ce titre."
     }
 }

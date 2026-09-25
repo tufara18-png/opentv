@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.FiberManualRecord
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.ui.Alignment
@@ -68,6 +69,7 @@ import app.tufaratv.ui.channels.SearchScreen
 import app.tufaratv.ui.VodViewModel
 import app.tufaratv.ui.onboarding.AddSourceScreen
 import app.tufaratv.ui.player.PlayerScreen
+import app.tufaratv.ui.player.LivePlaybackViewModel
 import app.tufaratv.ui.settings.AboutScreen
 import app.tufaratv.ui.settings.AppSettingsScreen
 import app.tufaratv.ui.settings.CatalogueSettingsScreen
@@ -110,16 +112,11 @@ class MainActivity : ComponentActivity() {
         setContent {
             val settings = remember { ServiceLocator.get(this).settings }
             val themeMode by settings.themeMode.collectAsState()
+            val systemDarkTheme = isSystemInDarkTheme()
             val darkTheme = when (themeMode) {
                 AppSettings.ThemeMode.DARK -> true
                 AppSettings.ThemeMode.LIGHT -> false
-                // A living-room screen defaults to dark unconditionally — this is a TV-first app,
-                // and detecting "is this box actually a TV" at runtime (`isTelevision`, still used
-                // elsewhere) turned out to be unreliable on at least one real Android TV emulator
-                // image, silently falling back to a stray light theme. A phone/tablet build still
-                // gets dark by default too now rather than trusting that detection either; Light
-                // stays one tap away in Settings for anyone who genuinely wants it.
-                AppSettings.ThemeMode.SYSTEM -> true
+                AppSettings.ThemeMode.SYSTEM -> systemDarkTheme
             }
             TufaraTvTheme(darkTheme = darkTheme) {
                 Surface(
@@ -268,6 +265,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
     val sourcesViewModel: SourcesViewModel = viewModel()
     val vodViewModel: VodViewModel = viewModel()
     val profilesViewModel: ProfilesViewModel = viewModel()
+    val livePlaybackViewModel: LivePlaybackViewModel = viewModel()
     val sourcesUi by sourcesViewModel.ui.collectAsState()
     val profiles by profilesViewModel.profiles.collectAsState()
     val activeProfileId by profilesViewModel.activeProfileId.collectAsState()
@@ -326,6 +324,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                 ServiceLocator.get(bootContext).recordingRepository.byId(req.recordingId)
             }.getOrNull() ?: return@LaunchedEffect
             runCatching {
+                livePlaybackViewModel.stop()
                 navController.navigate(
                     Routes.vodPlayer(
                         key = "rec:${rec.id}",
@@ -372,6 +371,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                     isTelevision = isTelevision,
                     hasSources = sourcesUi.sources.isNotEmpty(),
                     isSyncing = sourcesUi.syncing,
+                    livePlayback = livePlaybackViewModel,
                     onPlayChannel = { channel -> bootSettings.recordRecentChannel(channel.id); navController.navigate(Routes.player(channel.id)) },
                     onOpenMovie = { movie ->
                         navController.navigate(Routes.movieDetail(movie.id))
@@ -522,6 +522,7 @@ private fun TufaraTvApp(isTelevision: Boolean) {
                 val channelId = entry.arguments?.getString("channelId")?.toLongOrNull()
                 PlayerScreen(
                     channelId = channelId,
+                    livePlayback = livePlaybackViewModel,
                     onBack = { navController.popBackStack() },
                 )
             }
@@ -671,35 +672,6 @@ private fun TufaraTvApp(isTelevision: Boolean) {
         // "About to switch to a recording" banner — shows 30s before an auto-switch fires.
         RecordingSwitchBanner()
 
-        // Blocks the whole app during the very first VOD sync only (an existing catalogue never
-        // re-triggers this — see VodViewModel.vodLoading) so nothing half-loaded is reachable:
-        // no empty Movies/Shows tab, no TMDB row advertising a title before local availability is
-        // even known.
-        FirstSyncGate(vodViewModel)
-    }
-}
-
-@Composable
-private fun FirstSyncGate(vodViewModel: VodViewModel) {
-    val loading by vodViewModel.vodLoading.collectAsState()
-    if (!loading) return
-    val message by app.tufaratv.core.StatusBus.message.collectAsState()
-    Box(
-        Modifier
-            .fillMaxSize()
-            .background(Color.Black.copy(alpha = 0.96f))
-            .focusable(),
-        contentAlignment = Alignment.Center,
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            CircularProgressIndicator()
-            Spacer(Modifier.height(20.dp))
-            Text(
-                message ?: stringResource(R.string.vod_first_sync_title),
-                style = MaterialTheme.typography.titleMedium,
-                color = Color.White,
-            )
-        }
     }
 }
 

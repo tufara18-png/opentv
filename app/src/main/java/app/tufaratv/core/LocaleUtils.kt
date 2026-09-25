@@ -10,19 +10,21 @@ import android.content.res.Configuration
 import java.util.Locale
 
 /**
- * Applies the user's chosen UI language by wrapping a base [Context] with an overridden locale.
+ * Applies the product UI language by wrapping a base [Context] with an overridden locale.
  *
  * Done at attachBaseContext time (rather than the newer per-app-language API) so it works the same
  * on every supported version — minSdk 23 through the latest — and on Fire OS, without pulling in
- * AppCompat. A blank tag means "follow the device", so nothing is overridden.
+ * AppCompat. TufaraTV is intentionally French-first: the UI must stay French even when the TV or
+ * emulator uses English, otherwise untranslated fallback resources leak into the living-room UI.
  */
 object LocaleUtils {
 
-    fun wrap(base: Context): Context = wrap(base, AppSettings.savedLanguageTag(base))
+    private const val PRODUCT_LANGUAGE = "fr"
+
+    fun wrap(base: Context): Context = wrap(base, PRODUCT_LANGUAGE)
 
     fun wrap(base: Context, tag: String): Context {
-        if (tag.isBlank()) return base
-        val locale = Locale.forLanguageTag(tag)
+        val locale = Locale.forLanguageTag(tag.ifBlank { PRODUCT_LANGUAGE })
         Locale.setDefault(locale)
         val config = Configuration(base.resources.configuration)
         config.setLocale(locale)

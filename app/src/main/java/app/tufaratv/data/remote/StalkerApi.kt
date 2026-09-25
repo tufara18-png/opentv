@@ -407,7 +407,7 @@ class StalkerApi(
         val now = System.currentTimeMillis()
         if (!force) sessions[source.id]?.let { if (it.expiresAt > now) return it }
         val mac = source.macAddress?.trim().orEmpty()
-        if (mac.isEmpty()) throw StalkerException("This portal needs a MAC address (e.g. 00:1A:79:xx:xx:xx).")
+        if (mac.isEmpty()) throw StalkerException("Ce portail exige une adresse MAC (ex. 00:1A:79:xx:xx:xx).")
         var lastError: Throwable? = null
         for (endpoint in endpoints(source)) {
             val hs = runCatching { handshake(source, endpoint) }
@@ -422,7 +422,7 @@ class StalkerApi(
             }
         }
         throw StalkerException(
-            "The portal didn't accept this MAC address, or the URL is wrong.",
+            "Le portail a refusé cette adresse MAC ou l’adresse du portail est incorrecte.",
             lastError,
         )
     }

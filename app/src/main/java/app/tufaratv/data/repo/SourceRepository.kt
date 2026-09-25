@@ -21,6 +21,21 @@ class SourceRepository(
 ) {
     fun observeAll(): Flow<List<Source>> = dao.observeAll()
 
+    /** One-time local personalization, not part of the shared repo: seeds this device's own
+     *  Stalker portal so a reinstall/DB-wipe doesn't require retyping it by hand. No-ops once any
+     *  source exists. */
+    suspend fun seedDefaultIfEmpty() = withContext(Dispatchers.IO) {
+        if (dao.enabled().isNotEmpty()) return@withContext
+        dao.insert(
+            Source(
+                name = "DP Elite",
+                kind = SourceKind.STALKER,
+                url = "http://dp-elite.net:8080/portal.php",
+                macAddress = "00:1A:79:69:6F:61",
+            ),
+        )
+    }
+
     suspend fun enabled(): List<Source> = dao.enabled()
 
     suspend fun byId(id: Long): Source? = dao.byId(id)

@@ -40,6 +40,27 @@ class EpgMatcherTest {
     }
 
     @Test
+    fun `abbreviated provider id matches decorated guide id`() {
+        val idx = index(
+            "Réseau.des.Sports.(RDS).HD.ca2" to "Réseau des Sports (RDS) HD",
+            "Réseau.des.Sports.(RDS).ca2" to "Réseau des Sports (RDS)",
+        )
+
+        assertThat(idx.matchProviderId("RDSHD"))
+            .isEqualTo("Réseau.des.Sports.(RDS).HD.ca2")
+    }
+
+    @Test
+    fun `station prefix selects shortest compatible guide id`() {
+        val idx = index(
+            "CFTM-DT.ca2" to "CFTM-DT",
+            "CFTM.Montréal.ca2" to "CFTM Montréal",
+        )
+
+        assertThat(idx.matchProviderId("CFTM")).isEqualTo("CFTM-DT.ca2")
+    }
+
+    @Test
     fun `unique prefix matches are accepted`() {
         val idx = index("bbc1london.uk" to "BBC One London")
 

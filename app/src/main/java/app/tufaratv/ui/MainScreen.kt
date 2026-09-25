@@ -6,14 +6,6 @@
 package app.tufaratv.ui
 
 import androidx.activity.compose.BackHandler
-import androidx.compose.animation.AnimatedContent
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInHorizontally
-import androidx.compose.animation.slideOutHorizontally
-import androidx.compose.animation.togetherWith
-import androidx.compose.animation.core.animateDpAsState
-import androidx.compose.animation.core.tween
 import app.tufaratv.R
 import app.tufaratv.core.findActivity
 import app.tufaratv.core.StatusBus
@@ -43,9 +35,11 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.LiveTv
 import androidx.compose.material.icons.filled.Movie
 import androidx.compose.material.icons.filled.Person
+import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Tv
+import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.LinearProgressIndicator
 import androidx.compose.material3.Icon
@@ -70,23 +64,37 @@ import androidx.compose.ui.res.stringResource
 import app.tufaratv.core.AppSettings
 import androidx.compose.foundation.focusGroup
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.viewinterop.AndroidView
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import app.tufaratv.data.model.Channel
 import app.tufaratv.data.model.Movie
+import app.tufaratv.data.remote.TmdbMeta
 import app.tufaratv.data.remote.TmdbListItem
 import app.tufaratv.data.model.Recording
 import app.tufaratv.data.model.Series
+import app.tufaratv.data.parser.displayTitle
 import app.tufaratv.ui.channels.HomeScreen
+import app.tufaratv.ui.player.LivePlaybackViewModel
 import app.tufaratv.ui.recordings.RecordingsScreen
 import app.tufaratv.ui.vod.ContinueWatchingRow
 import app.tufaratv.ui.vod.MoviesScreen
+import app.tufaratv.ui.vod.MoviePosterRow
 import app.tufaratv.ui.vod.SectionHeader
 import app.tufaratv.ui.vod.TmdbPosterRow
 import app.tufaratv.ui.vod.SeriesScreen
+import app.tufaratv.ui.vod.SeriesPosterRow
+import app.tufaratv.ui.nativeview.NativeDashboardHero
+import app.tufaratv.ui.nativeview.NativeDashboardItem
+import app.tufaratv.ui.nativeview.NativeDashboardPalette
+import app.tufaratv.ui.nativeview.NativeDashboardSection
+import app.tufaratv.ui.nativeview.NativeDashboardView
 import androidx.lifecycle.viewmodel.compose.viewModel
 import coil.compose.AsyncImage
 
@@ -112,6 +120,7 @@ fun MainScreen(
     isTelevision: Boolean,
     hasSources: Boolean,
     isSyncing: Boolean,
+    livePlayback: LivePlaybackViewModel,
     onPlayChannel: (Channel) -> Unit,
     onOpenMovie: (Movie) -> Unit,
     onOpenTmdbMovie: (TmdbListItem) -> Unit,
@@ -184,34 +193,26 @@ fun MainScreen(
         )
     }
 
-    // The rail sits beside the content and pushes it, rather than floating over it. The Live TV
-    // screen has its own category rail down its left edge, and an overlaying menu would land on top
-    // of it and leave a sliver poking out — so they live side by side and never collide.
+    // Keep the content viewport fixed. Expanding the rail used to change Row constraints from
+    // 76dp to 236dp, forcing the complete dashboard/EPG (including poster images and hundreds of
+    // guide cells) through measure/layout on every focus crossing. TiviMate overlays its expanded
+    // menu instead; only the small rail redraws and the heavy screen underneath never reflows.
     Column(Modifier.fillMaxSize()) {
-      Row(Modifier.weight(1f).fillMaxWidth()) {
-        NavRail(
-            tabs = visibleTabs,
-            current = tab,
-            onSelect = { tab = it },
-            onOpenSearch = onOpenSearch,
-            onOpenSettings = onOpenSettings,
-            onOpenProfiles = onOpenProfiles,
-            activeProfileName = activeProfileName,
-        )
-
-        Box(Modifier.weight(1f).fillMaxHeight()) {
-            AnimatedContent(
-                targetState = tab,
-                transitionSpec = {
-                    (fadeIn(tween(180)) + slideInHorizontally(tween(220)) { it / 24 }) togetherWith
-                        (fadeOut(tween(120)) + slideOutHorizontally(tween(160)) { -it / 32 })
-                },
-                label = "mainTabTransition",
-            ) { selected ->
-                when (selected) {
+      Box(Modifier.weight(1f).fillMaxWidth()) {
+        val showGlobalRail = tab != Tab.LIVE
+        Box(
+            Modifier
+                .fillMaxSize()
+                .padding(start = if (showGlobalRail) RAIL_COLLAPSED else 0.dp),
+        ) {
+                // Only one heavy screen is composed at a time. Cross-fading two poster/EPG trees
+                // made low-end boxes decode and lay out both during every tab switch.
+                when (tab) {
                     Tab.HOME -> StreamingHomeScreen(
                         onPlayChannel = onPlayChannel,
+                        onOpenMovie = onOpenMovie,
                         onOpenTmdbMovie = onOpenTmdbMovie,
+                        onOpenSeries = onOpenSeries,
                         onOpenTmdbSeries = onOpenTmdbSeries,
                         onResume = onResume,
                     )
@@ -222,6 +223,7 @@ fun MainScreen(
                         onPlayChannel = onPlayChannel,
                         onAddSource = onAddSource,
                         onRefresh = onRefresh,
+                        livePlayback = livePlayback,
                         onPlayCatchup = onPlayCatchup,
                     )
                     Tab.MOVIES -> MoviesScreen(
@@ -242,7 +244,18 @@ fun MainScreen(
                     )
                     Tab.RECORDINGS -> RecordingsScreen(onPlay = onPlayRecording)
                 }
-            }
+        }
+        if (showGlobalRail) {
+            NavRail(
+                tabs = visibleTabs,
+                current = tab,
+                onSelect = { tab = it },
+                onOpenSearch = onOpenSearch,
+                onOpenSettings = onOpenSettings,
+                onOpenProfiles = onOpenProfiles,
+                activeProfileName = activeProfileName,
+                modifier = Modifier.align(Alignment.CenterStart),
+            )
         }
       }
       StatusBar()
@@ -252,7 +265,9 @@ fun MainScreen(
 @Composable
 private fun StreamingHomeScreen(
     onPlayChannel: (Channel) -> Unit,
+    onOpenMovie: (Movie) -> Unit,
     onOpenTmdbMovie: (TmdbListItem) -> Unit,
+    onOpenSeries: (Series) -> Unit,
     onOpenTmdbSeries: (TmdbListItem) -> Unit,
     onResume: (mediaKey: String, url: String, title: String) -> Unit,
     vodViewModel: VodViewModel = viewModel(),
@@ -260,44 +275,223 @@ private fun StreamingHomeScreen(
 ) {
     val resume by vodViewModel.continueWatching.collectAsState()
     val recentLive by homeViewModel.recentLive.collectAsState()
+    val favouriteMovies by vodViewModel.favouriteMovies.collectAsState()
+    val favouriteSeries by vodViewModel.favouriteSeries.collectAsState()
     val movies by vodViewModel.tmdbTrendingMovies.collectAsState()
     val series by vodViewModel.tmdbTrendingSeries.collectAsState()
+    val featuredItem = movies.firstOrNull()
+    var featuredMeta by remember(featuredItem?.tmdbId) { mutableStateOf<TmdbMeta?>(null) }
+    LaunchedEffect(featuredItem?.tmdbId) {
+        featuredMeta = featuredItem?.let { vodViewModel.tmdbDetail(it.tmdbId, it.isMovie) }
+    }
 
     // Home is now the product entry point, so VOD warm-up starts here rather than waiting for the
     // user to discover the Movies or Shows tabs. The repository TTL keeps this cheap on warm starts.
     LaunchedEffect(Unit) { vodViewModel.ensureVodLoaded() }
 
-    LazyColumn(
+    val palette = NativeDashboardPalette(
+        background = MaterialTheme.colorScheme.background.toArgb(),
+        surface = MaterialTheme.colorScheme.surface.toArgb(),
+        surfaceVariant = MaterialTheme.colorScheme.surfaceVariant.toArgb(),
+        text = MaterialTheme.colorScheme.onSurface.toArgb(),
+        secondaryText = MaterialTheme.colorScheme.onSurfaceVariant.toArgb(),
+        primary = MaterialTheme.colorScheme.primary.toArgb(),
+    )
+    val sections = buildList {
+        if (resume.isNotEmpty()) add(
+            NativeDashboardSection(
+                id = "continue",
+                title = stringResource(R.string.vod_continue_watching),
+                items = resume.map { item ->
+                    NativeDashboardItem(
+                        id = item.mediaKey,
+                        title = item.title,
+                        imageUrl = item.posterUrl,
+                        progress = item.progress,
+                        landscape = true,
+                        onClick = { onResume(item.mediaKey, item.streamUrl, item.title) },
+                    )
+                },
+            ),
+        )
+        if (recentLive.isNotEmpty()) add(
+            NativeDashboardSection(
+                id = "recent_live",
+                title = stringResource(R.string.home_recent_live),
+                items = recentLive.map { item ->
+                    NativeDashboardItem(
+                        id = "live:${item.channel.id}",
+                        title = item.channel.displayName,
+                        subtitle = item.now?.title ?: stringResource(R.string.nav_live_tv),
+                        imageUrl = item.channel.logoUrl,
+                        badge = item.channel.number?.toString(),
+                        progress = item.now?.progressAt(System.currentTimeMillis()),
+                        landscape = true,
+                        fitImage = true,
+                        compactLive = true,
+                        onClick = { onPlayChannel(item.channel) },
+                    )
+                },
+            ),
+        )
+        if (favouriteMovies.isNotEmpty()) add(
+            NativeDashboardSection(
+                id = "favourite_movies",
+                title = stringResource(R.string.vod_favourites_movies),
+                items = favouriteMovies.map { movie ->
+                    NativeDashboardItem(
+                        id = "movie:${movie.id}", title = movie.displayTitle,
+                        subtitle = movie.year?.toString(), imageUrl = movie.posterUrl,
+                        badge = movie.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
+                        favourite = true, onClick = { onOpenMovie(movie) },
+                    )
+                },
+            ),
+        )
+        if (favouriteSeries.isNotEmpty()) add(
+            NativeDashboardSection(
+                id = "favourite_series",
+                title = stringResource(R.string.vod_favourites_series),
+                items = favouriteSeries.map { show ->
+                    NativeDashboardItem(
+                        id = "series:${show.id}", title = show.displayTitle,
+                        subtitle = show.year?.toString(), imageUrl = show.posterUrl,
+                        badge = show.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
+                        favourite = true, onClick = { onOpenSeries(show) },
+                    )
+                },
+            ),
+        )
+        if (movies.isNotEmpty()) add(
+            NativeDashboardSection(
+                id = "trending_movies",
+                title = stringResource(R.string.home_trending_movies),
+                items = movies.map { item ->
+                    NativeDashboardItem(
+                        id = "tmdb-movie:${item.tmdbId}", title = item.title,
+                        subtitle = item.year?.toString(), imageUrl = item.posterUrl,
+                        badge = item.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
+                        onClick = { onOpenTmdbMovie(item) },
+                    )
+                },
+            ),
+        )
+        if (series.isNotEmpty()) add(
+            NativeDashboardSection(
+                id = "trending_series",
+                title = stringResource(R.string.home_trending_series),
+                items = series.map { item ->
+                    NativeDashboardItem(
+                        id = "tmdb-series:${item.tmdbId}", title = item.title,
+                        subtitle = item.year?.toString(), imageUrl = item.posterUrl,
+                        badge = item.rating?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
+                        onClick = { onOpenTmdbSeries(item) },
+                    )
+                },
+            ),
+        )
+    }
+    val featured = featuredItem?.let { item ->
+        NativeDashboardHero(
+            id = "featured:${item.tmdbId}",
+            title = featuredMeta?.title?.takeIf { it.isNotBlank() } ?: item.title,
+            subtitle = listOfNotNull(
+                (featuredMeta?.year ?: item.year)?.toString(),
+                (featuredMeta?.rating ?: item.rating)?.takeIf { it > 0 }?.let { "★ %.1f".format(it) },
+                featuredMeta?.overview?.takeIf { it.isNotBlank() },
+            ).joinToString("  •  "),
+            imageUrl = featuredMeta?.backdropUrl ?: item.posterUrl,
+            onClick = { onOpenTmdbMovie(item) },
+        )
+    }
+    AndroidView(
+        factory = { NativeDashboardView(it) },
+        update = { it.submit(featured, sections, palette) },
         modifier = Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(top = 22.dp, bottom = 28.dp),
-        verticalArrangement = Arrangement.spacedBy(18.dp),
+    )
+}
+
+/** Large streaming-service hero. Details arrive lazily; the browse poster remains a safe fallback. */
+@Composable
+private fun FeaturedTitle(
+    item: TmdbListItem,
+    loadMeta: suspend () -> TmdbMeta?,
+    onOpen: () -> Unit,
+) {
+    var meta by remember(item.tmdbId) { mutableStateOf<TmdbMeta?>(null) }
+    LaunchedEffect(item.tmdbId) { meta = loadMeta() }
+
+    Box(
+        Modifier
+            .fillMaxWidth()
+            .height(360.dp)
+            .background(Color.Black),
     ) {
-        if (resume.isNotEmpty()) {
-            item(key = "continue") { ContinueWatchingRow(resume, onResume) }
-        }
-        if (recentLive.isNotEmpty()) {
-            item(key = "recent_live") {
-                Column(Modifier.fillMaxWidth()) {
-                    SectionHeader(stringResource(R.string.home_recent_live))
-                    LazyRow(
-                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
-                        horizontalArrangement = Arrangement.spacedBy(12.dp),
-                    ) {
-                        items(recentLive, key = { it.channel.id }) { item ->
-                            RecentLiveCard(item = item, onClick = { onPlayChannel(item.channel) })
-                        }
-                    }
-                }
+        AsyncImage(
+            model = meta?.backdropUrl ?: item.posterUrl,
+            contentDescription = item.title,
+            contentScale = ContentScale.Crop,
+            modifier = Modifier.fillMaxSize(),
+        )
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(
+                    Brush.horizontalGradient(
+                        0f to Color.Black.copy(alpha = 0.92f),
+                        0.52f to Color.Black.copy(alpha = 0.36f),
+                        1f to Color.Transparent,
+                    ),
+                )
+                .background(
+                    Brush.verticalGradient(
+                        0f to Color.Transparent,
+                        1f to MaterialTheme.colorScheme.background,
+                    ),
+                ),
+        )
+        Column(
+            Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxWidth(0.54f)
+                .padding(start = 42.dp, end = 24.dp, top = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Text(
+                stringResource(R.string.home_featured),
+                style = MaterialTheme.typography.labelLarge,
+                color = MaterialTheme.colorScheme.primary,
+                fontWeight = FontWeight.Bold,
+            )
+            Text(
+                meta?.title?.takeIf { it.isNotBlank() } ?: item.title,
+                style = MaterialTheme.typography.displaySmall,
+                color = Color.White,
+                fontWeight = FontWeight.Bold,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis,
+            )
+            Text(
+                listOfNotNull(
+                    (meta?.year ?: item.year)?.toString(),
+                    (meta?.rating ?: item.rating)?.takeIf { it > 0.0 }?.let { "★ %.1f".format(it) },
+                ).joinToString("  •  "),
+                style = MaterialTheme.typography.bodyMedium,
+                color = Color.White.copy(alpha = 0.84f),
+            )
+            meta?.overview?.takeIf { it.isNotBlank() }?.let { overview ->
+                Text(
+                    overview,
+                    style = MaterialTheme.typography.bodyLarge,
+                    color = Color.White.copy(alpha = 0.88f),
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis,
+                )
             }
-        }
-        if (movies.isNotEmpty()) {
-            item(key = "trending_movies") {
-                TmdbPosterRow(stringResource(R.string.home_trending_movies), movies, onOpenTmdbMovie)
-            }
-        }
-        if (series.isNotEmpty()) {
-            item(key = "trending_series") {
-                TmdbPosterRow(stringResource(R.string.home_trending_series), series, onOpenTmdbSeries)
+            Button(onClick = onOpen) {
+                Icon(Icons.Filled.PlayArrow, contentDescription = null)
+                Spacer(Modifier.width(8.dp))
+                Text(stringResource(R.string.home_view_title))
             }
         }
     }
@@ -441,10 +635,9 @@ private fun NavRail(
 ) {
     // Expand whenever focus is anywhere inside the rail; collapse back to icons when it leaves.
     var expanded by remember { mutableStateOf(false) }
-    val width by animateDpAsState(
-        targetValue = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED,
-        label = "railWidth",
-    )
+    // As with the guide's category rail, a snapped width costs one layout pass instead of forcing
+    // the whole dashboard/EPG to reflow on every frame of a width animation.
+    val width = if (expanded) RAIL_EXPANDED else RAIL_COLLAPSED
 
     Column(
         modifier

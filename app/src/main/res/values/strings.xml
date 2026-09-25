@@ -4,6 +4,12 @@
     <string name="home_recent_live">Recently watched live</string>
     <string name="home_trending_movies">Trending movies</string>
     <string name="home_trending_series">Trending series</string>
+    <string name="home_featured">FEATURED FOR YOU</string>
+    <string name="home_view_title">View title</string>
+    <string name="home_popular_movies">Popular movies</string>
+    <string name="home_top_series">Top-rated series</string>
+    <string name="home_recent_movies">Recently added movies</string>
+    <string name="home_recent_series">Recently added series</string>
     <string name="app_name">TufaraTV</string>
 
     <!-- ============================ Common / reused ============================ -->
@@ -123,6 +129,8 @@
     <string name="player_pause">Pause</string>
     <string name="player_forward">Forward</string>
     <string name="player_next_episode">Next episode</string>
+    <string name="player_episodes">Episodes</string>
+    <string name="player_now_playing">Now playing</string>
     <string name="player_subtitles">Subtitles</string>
     <string name="player_audio">Audio</string>
     <string name="player_quality">Quality</string>
@@ -445,6 +453,7 @@
     <string name="vod_all">All</string>
     <string name="vod_search_hint">Search movies &amp; shows</string>
     <string name="vod_continue_watching">Continue watching</string>
+    <string name="vod_favourites">My favourites</string>
     <string name="vod_large_provider_note">A large provider can take a couple of minutes the first time.</string>
     <string name="vod_recommended">Recommended for you</string>
     <string name="vod_tmdb_trending">Trending</string>
@@ -520,4 +529,9 @@
     <string name="settings_tmdb_save">Save key</string>
     <string name="settings_tmdb_saved">TMDB key saved</string>
     <string name="settings_tmdb_active">Active</string>
+    <string name="channels_manager_move_group_up">Move group up</string>
+    <string name="channels_manager_move_group_down">Move group down</string>
+    <string name="vod_favourites_movies">Favourite movies</string>
+    <string name="vod_favourites_series">Favourite series</string>
+    <string name="player_programmes">Programmes</string>
 </resources>

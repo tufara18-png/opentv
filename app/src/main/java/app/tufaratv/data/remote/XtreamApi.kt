@@ -53,14 +53,14 @@ class XtreamApi(
     suspend fun authenticate(source: Source): AccountInfo = withContext(Dispatchers.IO) {
         val body = getJson(source, action = null).jsonObject
         val userInfo = body["user_info"]?.jsonObjectOrNull
-            ?: throw XtreamException("The server did not return account information.")
+            ?: throw XtreamException("Le serveur n’a renvoyé aucune information de compte.")
 
         val status = userInfo["status"].asStringOrNull
         if (status != null && !status.equals("Active", ignoreCase = true)) {
-            throw XtreamException("This account is $status.")
+            throw XtreamException("Ce compte est $status.")
         }
         if (userInfo["auth"].asIntOrNull == 0) {
-            throw XtreamException("Username or password rejected by the server.")
+            throw XtreamException("Nom d’utilisateur ou mot de passe refusé par le serveur.")
         }
 
         AccountInfo(
@@ -278,10 +278,10 @@ class XtreamApi(
         val response = http.newCall(request(source, url)).execute()
         if (!response.isSuccessful) {
             response.close()
-            throw XtreamException("Guide download failed (HTTP ${response.code}).")
+            throw XtreamException("Échec du téléchargement du guide (HTTP ${response.code}).")
         }
         response.body?.byteStream()
-            ?: throw XtreamException("The server returned an empty guide.")
+            ?: throw XtreamException("Le serveur a renvoyé un guide vide.")
     }
 
     // ---- URL construction ----------------------------------------------------------------
@@ -338,7 +338,7 @@ class XtreamApi(
                 throw XtreamException(describeHttpFailure(response.code))
             }
             val text = response.body?.string().orEmpty()
-            if (text.isBlank()) throw XtreamException("The server returned an empty response.")
+            if (text.isBlank()) throw XtreamException("Le serveur a renvoyé une réponse vide.")
             return try {
                 json.parseToJsonElement(text)
             } catch (e: Exception) {
@@ -346,7 +346,7 @@ class XtreamApi(
                 // "not valid JSON" is useless to a user; say what it probably means.
                 throw XtreamException(
                     "The server replied with something that is not a valid catalogue. " +
-                        "Check the address and port are correct.",
+                        "Vérifiez l’adresse et le port.",
                     e,
                 )
             }
@@ -363,12 +363,12 @@ class XtreamApi(
         401, 403 -> "The server refused the request (HTTP $code). The username or password " +
             "may be wrong, or the provider may be blocking this app's User-Agent — try " +
             "changing it in the source's advanced settings."
-        404 -> "No Xtream API at that address (HTTP 404). Check the URL and port."
+        404 -> "Aucune API Xtream à cette adresse (HTTP 404). Vérifiez l’adresse et le port."
         405 -> "The server rejected the request method (HTTP 405). This usually means the " +
             "address points at a plain playlist rather than an Xtream panel."
-        429 -> "The server is rate-limiting this device (HTTP 429). Try again shortly."
-        in 500..599 -> "The provider's server is having problems (HTTP $code)."
-        else -> "The server returned HTTP $code."
+        429 -> "Le serveur limite temporairement cet appareil (HTTP 429). Réessayez bientôt."
+        in 500..599 -> "Le serveur du fournisseur rencontre un problème (HTTP $code)."
+        else -> "Le serveur a renvoyé le code HTTP $code."
     }
 
     data class AccountInfo(

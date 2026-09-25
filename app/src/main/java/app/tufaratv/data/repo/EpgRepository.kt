@@ -7,6 +7,7 @@ package app.tufaratv.data.repo
 
 import android.util.Log
 import app.tufaratv.data.db.ChannelDao
+import app.tufaratv.data.db.CategoryDao
 import app.tufaratv.data.db.EpgChannelAliasDao
 import app.tufaratv.data.db.EpgFeedDao
 import app.tufaratv.data.db.ProgrammeDao
@@ -15,11 +16,16 @@ import app.tufaratv.data.model.EpgChannelAlias
 import app.tufaratv.data.model.EpgFeed
 import app.tufaratv.data.model.Programme
 import app.tufaratv.data.model.Source
+import app.tufaratv.data.model.SourceKind
+import app.tufaratv.data.model.StreamKind
 import app.tufaratv.data.parser.ChannelNameNormalizer
+import app.tufaratv.data.parser.CountryResolver
 import app.tufaratv.data.parser.XmltvParser
 import app.tufaratv.data.remote.XtreamApi
+import app.tufaratv.core.AppSettings
 import java.io.BufferedInputStream
 import java.io.InputStream
+import java.util.Locale
 import java.util.concurrent.TimeUnit
 import java.util.zip.GZIPInputStream
 import kotlinx.coroutines.CancellationException
@@ -60,9 +66,11 @@ class EpgRepository(
     private val feedDao: EpgFeedDao,
     private val aliasDao: EpgChannelAliasDao,
     private val channelDao: ChannelDao,
+    private val categoryDao: CategoryDao,
     private val sourceDao: SourceDao,
     private val api: XtreamApi,
     private val http: OkHttpClient,
+    private val settings: AppSettings,
 ) {
 
     data class SyncSummary(
@@ -79,6 +87,12 @@ class EpgRepository(
 
     fun observeWindow(fromUtcMillis: Long, toUtcMillis: Long): Flow<List<Programme>> =
         programmeDao.observeWindow(fromUtcMillis, toUtcMillis)
+
+    fun observeWindowForChannels(
+        epgChannelIds: List<String>,
+        fromUtcMillis: Long,
+        toUtcMillis: Long,
+    ): Flow<List<Programme>> = programmeDao.observeWindowForChannels(epgChannelIds, fromUtcMillis, toUtcMillis)
 
     fun observeNow(nowUtcMillis: Long): Flow<List<Programme>> =
         programmeDao.observeNow(nowUtcMillis)
@@ -135,7 +149,11 @@ class EpgRepository(
     // ---- Sync ------------------------------------------------------------------------------
 
     /** Downloads every enabled feed, merges, prunes, and re-runs the matcher. */
-    suspend fun syncAll(nowUtcMillis: Long, force: Boolean = false): SyncSummary =
+    suspend fun syncAll(
+        nowUtcMillis: Long,
+        force: Boolean = false,
+        includeStalker: Boolean = true,
+    ): SyncSummary =
         withContext(Dispatchers.IO) {
             ensureFeeds()
             maybeAutoEnableRegionalFeed()
@@ -143,15 +161,21 @@ class EpgRepository(
             var succeeded = 0
             var failed = 0
             var written = 0
+            var refreshed = 0
+            var successfulRefreshes = 0
 
             for (feed in feedDao.enabled()) {
+                val provider = feed.providerSourceId?.let { sourceDao.byId(it) }
+                if (!includeStalker && provider?.kind == SourceKind.STALKER) continue
                 if (!force && nowUtcMillis - feed.lastSyncMillis < REFRESH_INTERVAL_MILLIS) {
                     succeeded++
                     continue
                 }
+                refreshed++
                 when (val result = syncFeed(feed, nowUtcMillis)) {
                     is FeedResult.Success -> {
                         succeeded++
+                        successfulRefreshes++
                         written += result.programmes
                         feedDao.markSynced(
                             feed.id,
@@ -167,6 +191,16 @@ class EpgRepository(
                         Log.w(TAG, "Feed '${feed.name}' failed: ${result.reason}")
                     }
                 }
+            }
+
+            // A warm start with fresh feeds is a pure cache hit. Do no deletes and, crucially, do
+            // not rebuild the fuzzy matcher across tens of thousands of channels. This was one of
+            // the largest cold-start CPU/Room spikes on low-end TV hardware.
+            if (refreshed == 0 || successfulRefreshes == 0) {
+                // Failed stale feeds used to fall through here whenever another feed was merely
+                // fresh. That rebuilt the matcher for 12k channels after a DNS failure even though
+                // not one guide row had changed — a large, pointless allocation spike at launch.
+                return@withContext SyncSummary(succeeded, failed, written, 0, 0)
             }
 
             if (succeeded > 0) {
@@ -278,16 +312,24 @@ class EpgRepository(
      */
     suspend fun runMatcher(): Pair<Int, Int> {
         val aliases = aliasDao.all()
-        val index = EpgMatcher.buildIndex(aliases.map { it.epgId to it.displayName })
         // Only ids that actually have programmes count as "working" — a match against a
         // channel the guide lists but never fills is a guide that looks broken.
         val populated = programmeDao.channelIdsWithProgrammes().toHashSet()
+        val index = EpgMatcher.buildIndex(
+            aliases.asSequence()
+                .filter { it.epgId in populated }
+                .map { it.epgId to it.displayName }
+                .asIterable(),
+        )
 
         val channels = channelDao.allForMatching()
         var matched = 0
 
         for (channel in channels) {
-            val newMatch = index.match(channel.groupKey)
+            // A provider-supplied XMLTV id is stronger than a fuzzy channel-name match. Public
+            // feeds frequently decorate that same id, so try the compact id bridge first.
+            val newMatch = index.matchProviderId(channel.epgChannelId)
+                ?: index.match(channel.groupKey)
             if (newMatch != channel.matchedEpgId) {
                 channelDao.setMatchedEpgId(channel.id, newMatch)
             }
@@ -323,29 +365,81 @@ class EpgRepository(
         val all = feedDao.all()
         val builtIns = all.filter { it.builtIn }
         if (builtIns.isEmpty()) return
-        val pristine = builtIns.all { !it.enabled && it.lastSyncMillis == 0L } &&
-            all.none { !it.builtIn && it.providerSourceId == null }
-        if (!pristine) return
+
+        // Existing installs that already synced a guide have necessarily completed region setup.
+        // Mark the migration locally and skip the all-channel scan immediately.
+        if (!settings.epgAutoRegionInitialized && all.any { it.lastSyncMillis > 0L }) {
+            settings.epgAutoRegionInitialized = true
+        }
+        if (settings.epgAutoRegionInitialized) return
 
         val regionCounts = HashMap<String, Int>()
         for (channel in channelDao.allForMatching()) {
             val region = ChannelNameNormalizer.normalize(channel.name).region ?: continue
             regionCounts.merge(region, 1, Int::plus)
         }
-        val top = regionCounts.maxByOrNull { it.value } ?: return
-        if (top.value < MIN_CHANNELS_FOR_AUTO_REGION) return
+        val locale = Locale.getDefault()
+        val regions = regionCounts.filterValues { it >= MIN_CHANNELS_FOR_AUTO_REGION }.keys.toMutableSet()
 
-        val feedName = REGION_TO_FEED[top.key] ?: return
-        val feed = builtIns.firstOrNull { it.name == feedName } ?: return
-        feedDao.setEnabled(feed.id, true)
-        Log.i(TAG, "Auto-enabled '${feed.name}' — ${top.value} channels tagged ${top.key}")
+        // Normalisation deliberately removes country prefixes before channels are stored, so a
+        // later guide refresh cannot reliably recover every country from channel.name. Live
+        // category names retain that information ("FRENCH", "UNITED KINGDOM", "BELGIUM"...).
+        // Scan this small cached table once; never inspect or query channels during playback.
+        for (category in categoryDao.allByKind(StreamKind.LIVE)) {
+            val normalized = ChannelNameNormalizer.normalize(category.name)
+            val country = normalized.region?.let(CountryResolver::resolve)
+                ?: CountryResolver.resolve(normalized.baseName)
+                ?: CountryResolver.resolveAnyToken(normalized.baseName)?.first
+            country?.code?.let { regions += it }
+        }
+        locale.country.takeIf { it.isNotBlank() }?.let { regions += it }
+        if (locale.language == "fr") regions += "CA"
+
+        for (region in regions) {
+            val feed = regionalFeed(region) ?: continue
+            val existing = all.firstOrNull { it.url == feed.second }
+            if (existing != null) {
+                if (!existing.enabled) feedDao.setEnabled(existing.id, true)
+                continue
+            }
+            val feedId = feedDao.insert(
+                EpgFeed(
+                    name = feed.first,
+                    url = feed.second,
+                    builtIn = true,
+                    enabled = true,
+                ),
+            )
+            Log.i(TAG, "Auto-enabled regional EPG '$region' (feed $feedId)")
+        }
+        settings.epgAutoRegionInitialized = true
     }
+
+    private fun regionalFeed(region: String): Pair<String, String>? = when (region.uppercase()) {
+        "UK", "GB" -> "UK — epgshare01" to epgShareUrl("UK1")
+        "US", "USA" -> "USA — epgshare01" to epgShareUrl("US2")
+        "CA" -> "Canada — epgshare01" to epgShareUrl("CA2")
+        "AU", "AUS" -> "Australia — epgshare01" to epgShareUrl("AU1")
+        "FR" -> "France — epgshare01" to epgShareUrl("FR1")
+        "DE" -> "Germany — epgshare01" to epgShareUrl("DE1")
+        "ES" -> "Spain — epgshare01" to epgShareUrl("ES1")
+        "IT" -> "Italy — epgshare01" to epgShareUrl("IT1")
+        "BE" -> "Belgium — epgshare01" to epgShareUrl("BE2")
+        "CH" -> "Switzerland — epgshare01" to epgShareUrl("CH1")
+        else -> null
+    }
+
+    private fun epgShareUrl(fileCode: String): String =
+        "https://epgshare01.online/epgshare01/epg_ripper_${fileCode}.xml.gz"
 
     companion object {
         private const val TAG = "EpgRepository"
 
         /** Writes per transaction. Large enough to be fast, small enough not to hold WAL open. */
-        const val BATCH_SIZE = 500
+        // Room wraps each list insert in one transaction. Larger batches drastically reduce
+        // invalidation notifications (and therefore live/dashboard EPG re-queries) during an
+        // explicit refresh, without retaining the complete XMLTV in memory.
+        const val BATCH_SIZE = 5_000
 
         /** Keep finished programmes for a day so "what was on" still works. */
         val RETENTION_PAST_MILLIS: Long = TimeUnit.DAYS.toMillis(1)
@@ -376,16 +470,16 @@ class EpgRepository(
         )
 
         val BUILT_IN_FEEDS: List<Pair<String, String>> = listOf(
-            "UK — Freeview (free-to-air)" to
-                "https://raw.githubusercontent.com/dp247/Freeview-EPG/master/epg.xml",
-            "UK — epgshare01 (Sky lineup)" to
-                "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz",
-            "USA — epgshare01" to
-                "https://epgshare01.online/epgshare01/epg_ripper_US1.xml.gz",
-            "Canada — epgshare01" to
-                "https://epgshare01.online/epgshare01/epg_ripper_CA1.xml.gz",
-            "Australia — epgshare01" to
-                "https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz",
+            "UK — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_UK1.xml.gz",
+            "USA — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_US2.xml.gz",
+            "Canada — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_CA2.xml.gz",
+            "Australia — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_AU1.xml.gz",
+            "France — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_FR1.xml.gz",
+            "Germany — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_DE1.xml.gz",
+            "Spain — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_ES1.xml.gz",
+            "Italy — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_IT1.xml.gz",
+            "Belgium — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_BE2.xml.gz",
+            "Switzerland — epgshare01" to "https://epgshare01.online/epgshare01/epg_ripper_CH1.xml.gz",
         )
     }
 }

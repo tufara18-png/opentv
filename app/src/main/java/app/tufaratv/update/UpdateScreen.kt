@@ -45,12 +45,12 @@ fun UpdateGate(viewModel: UpdateViewModel = viewModel()) {
 
         is UpdateUiState.Available -> AlertDialog(
             onDismissRequest = viewModel::dismiss,
-            confirmButton = { TextButton(onClick = viewModel::install) { Text("Update") } },
-            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text("Later") } },
-            title = { Text("Update available") },
+            confirmButton = { TextButton(onClick = viewModel::install) { Text("Mettre à jour") } },
+            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text("Plus tard") } },
+            title = { Text("Mise à jour disponible") },
             text = {
                 Column(Modifier.verticalScroll(rememberScrollState())) {
-                    Text("TufaraTV ${s.update.versionName} is available. You have ${BuildConfig.VERSION_NAME}.")
+                    Text("TufaraTV ${s.update.versionName} est disponible. Version installée : ${BuildConfig.VERSION_NAME}.")
                     if (s.update.notes.isNotBlank()) {
                         Text(
                             text = s.update.notes,
@@ -66,7 +66,7 @@ fun UpdateGate(viewModel: UpdateViewModel = viewModel()) {
         is UpdateUiState.Downloading -> AlertDialog(
             onDismissRequest = {}, // a download in flight should not be dismissed by a stray click
             confirmButton = {},
-            title = { Text("Downloading update…") },
+            title = { Text("Téléchargement de la mise à jour…") },
             text = {
                 Column {
                     if (s.fraction >= 0f) {
@@ -84,10 +84,10 @@ fun UpdateGate(viewModel: UpdateViewModel = viewModel()) {
 
         is UpdateUiState.Failed -> AlertDialog(
             onDismissRequest = viewModel::dismiss,
-            confirmButton = { TextButton(onClick = viewModel::install) { Text("Retry") } },
-            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text("Close") } },
-            title = { Text("Update failed") },
-            text = { Text("Could not download the update. Check the connection and try again.") },
+            confirmButton = { TextButton(onClick = viewModel::install) { Text("Réessayer") } },
+            dismissButton = { TextButton(onClick = viewModel::dismiss) { Text("Fermer") } },
+            title = { Text("Échec de la mise à jour") },
+            text = { Text("Impossible de télécharger la mise à jour. Vérifiez la connexion et réessayez.") },
         )
     }
 }

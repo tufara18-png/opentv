@@ -66,6 +66,8 @@ class PlayerController(
      * in memory is a real cost on a cheap box; the recording player and preview never set it.
      */
     private val dvr: Boolean = false,
+    /** One live player shared by guide preview and full-screen playback. */
+    private val sharedLive: Boolean = false,
     /**
      * When set, `smb://` media (a recording on a NAS) is read through this source so it plays and
      * seeks in-app. Null for the live/VOD players, which never see an smb URI.
@@ -87,7 +89,7 @@ class PlayerController(
 ) {
 
     /** Channel-surf debounce for this controller — longer for the preview so browsing is calm. */
-    private val switchDebounceMillis = if (preview) PREVIEW_SWITCH_DEBOUNCE_MILLIS else SWITCH_DEBOUNCE_MILLIS
+    private val switchDebounceMillis = if (preview || sharedLive) PREVIEW_SWITCH_DEBOUNCE_MILLIS else SWITCH_DEBOUNCE_MILLIS
 
     sealed interface State {
         data object Idle : State
@@ -190,26 +192,40 @@ class PlayerController(
         .setLoadControl(
             DefaultLoadControl.Builder()
                 .setBufferDurationsMs(
-                    if (preview) PREVIEW_MIN_BUFFER_MILLIS else MIN_BUFFER_MILLIS,
+                    when {
+                        preview -> PREVIEW_MIN_BUFFER_MILLIS
+                        sharedLive -> SHARED_LIVE_MIN_BUFFER_MILLIS
+                        else -> MIN_BUFFER_MILLIS
+                    },
                     when {
                         preview -> PREVIEW_MAX_BUFFER_MILLIS
+                        sharedLive -> SHARED_LIVE_MAX_BUFFER_MILLIS
                         dvr -> DVR_MAX_BUFFER_MILLIS
                         liveRecording -> LIVE_REC_MAX_BUFFER_MILLIS
                         else -> MAX_BUFFER_MILLIS
                     },
                     when {
                         preview -> PREVIEW_BUFFER_FOR_PLAYBACK_MILLIS
+                        sharedLive -> SHARED_LIVE_BUFFER_FOR_PLAYBACK_MILLIS
                         liveRecording -> LIVE_REC_BUFFER_FOR_PLAYBACK_MILLIS
                         else -> BUFFER_FOR_PLAYBACK_MILLIS
                     },
                     when {
                         preview -> PREVIEW_BUFFER_AFTER_REBUFFER_MILLIS
+                        sharedLive -> SHARED_LIVE_BUFFER_AFTER_REBUFFER_MILLIS
                         liveRecording -> LIVE_REC_BUFFER_AFTER_REBUFFER_MILLIS
                         else -> BUFFER_FOR_PLAYBACK_AFTER_REBUFFER_MILLIS
                     },
                 )
                 // Retain the last few minutes so pause/rewind of live TV has something to seek into.
-                .apply { if (dvr) setBackBuffer(DVR_BACK_BUFFER_MILLIS, true) }
+                .apply {
+                    if (dvr) {
+                        setBackBuffer(
+                            if (sharedLive) SHARED_LIVE_BACK_BUFFER_MILLIS else DVR_BACK_BUFFER_MILLIS,
+                            true,
+                        )
+                    }
+                }
                 .build(),
         )
         .build()
@@ -420,6 +436,14 @@ class PlayerController(
         const val PREVIEW_BUFFER_FOR_PLAYBACK_MILLIS = 1_000
         const val PREVIEW_BUFFER_AFTER_REBUFFER_MILLIS = 1_500
         const val PREVIEW_SWITCH_DEBOUNCE_MILLIS = 700L
+
+        // One balanced buffer for preview -> full-screen hand-off: quick first frame, enough
+        // headroom for IPTV jitter, and bounded memory on inexpensive TV devices.
+        const val SHARED_LIVE_MIN_BUFFER_MILLIS = 5_000
+        const val SHARED_LIVE_MAX_BUFFER_MILLIS = 30_000
+        const val SHARED_LIVE_BUFFER_FOR_PLAYBACK_MILLIS = 1_000
+        const val SHARED_LIVE_BUFFER_AFTER_REBUFFER_MILLIS = 2_500
+        const val SHARED_LIVE_BACK_BUFFER_MILLIS = 60_000
 
         const val LIVE_TARGET_OFFSET_MILLIS = 10_000L
     }

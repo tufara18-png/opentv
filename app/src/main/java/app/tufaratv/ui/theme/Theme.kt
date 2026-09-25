@@ -50,15 +50,25 @@ private val DarkScheme = darkColorScheme(
  * explicitly picks Light in settings gets it on any device.
  */
 private val LightScheme = lightColorScheme(
-    primary = Color(0xFFE50914),
+    // A darker red keeps white focused text above AA contrast on a television. The old pale
+    // primary container combined with mixed hard-coded artwork overlays and became unreadable.
+    primary = Color(0xFFB00020),
     onPrimary = Color.White,
-    background = Color(0xFFFBFBFE),
-    onBackground = Color(0xFF13141A),
+    primaryContainer = Color(0xFFB00020),
+    onPrimaryContainer = Color.White,
+    secondary = Color(0xFF434751),
+    onSecondary = Color.White,
+    secondaryContainer = Color(0xFFDDE1E8),
+    onSecondaryContainer = Color(0xFF111318),
+    background = Color(0xFFF3F4F6),
+    onBackground = Color(0xFF101114),
     surface = Color.White,
-    onSurface = Color(0xFF13141A),
-    surfaceVariant = Color(0xFFEEF0F6),
-    onSurfaceVariant = Color(0xFF4A4F60),
-    outline = Color(0xFFD3D7E2),
+    onSurface = Color(0xFF101114),
+    surfaceVariant = Color(0xFFE1E4E9),
+    onSurfaceVariant = Color(0xFF282C34),
+    outline = Color(0xFF6B7280),
+    error = Color(0xFFBA1A1A),
+    onError = Color.White,
 )
 
 /** Scaled up from the Material defaults: ten-foot viewing needs bigger text than a phone. */

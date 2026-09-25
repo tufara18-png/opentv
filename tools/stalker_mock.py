@@ -63,6 +63,11 @@ CHANNELS = [
      "cmd": "ffmpeg http://localhost/ch/3", "logo": "", "xmltv_id": ""},
 ]
 
+EPG = [
+    {"name": "Test programme 1", "t_time": "1761120000", "t_duration": "1800", "descr": "Mock EPG entry"},
+    {"name": "Test programme 2", "t_time": "1761121800", "t_duration": "1800", "descr": "Mock EPG entry"},
+]
+
 
 def js(payload):
     """Stalker wraps every response in a top-level {"js": ...}."""
@@ -88,6 +93,9 @@ def dispatch(qs):
     if type_ == "itv" and action in ("get_all_channels", "get_ordered_list"):
         return js({"data": CHANNELS, "total_items": len(CHANNELS),
                    "max_page_items": len(CHANNELS), "selected_item": 0})
+
+    if type_ == "itv" and action in ("get_short_epg", "get_epg_info"):
+        return js(EPG)
 
     if type_ == "itv" and action == "create_link":
         cmd = qs.get("cmd", [""])[0]

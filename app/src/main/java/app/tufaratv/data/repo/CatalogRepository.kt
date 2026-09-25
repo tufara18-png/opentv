@@ -6,6 +6,7 @@
 package app.tufaratv.data.repo
 
 import android.util.Log
+import androidx.room.withTransaction
 import app.tufaratv.core.AppSettings
 import app.tufaratv.data.db.CanonicalEpisodeDao
 import app.tufaratv.data.db.CanonicalMovieDao
@@ -14,6 +15,7 @@ import app.tufaratv.data.db.CategoryDao
 import app.tufaratv.data.db.ChannelDao
 import app.tufaratv.data.db.EpisodeDao
 import app.tufaratv.data.db.MovieDao
+import app.tufaratv.data.db.OpenTvDatabase
 import app.tufaratv.data.db.PlaybackPositionDao
 import app.tufaratv.data.db.PreferredVariantDao
 import app.tufaratv.data.db.SeriesDao
@@ -51,6 +53,8 @@ import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import okhttp3.OkHttpClient
 import okhttp3.Request
@@ -123,9 +127,12 @@ data class MovieVariantGroup(
  * stays genre order.
  */
 private fun dedupeMoviesByCanonical(movies: List<Movie>): List<Movie> {
-    val byKey = LinkedHashMap<Long, Movie>()
+    val byKey = LinkedHashMap<String, Movie>()
     for (movie in movies) {
-        val key = movie.canonicalId ?: -movie.id
+        val key = movie.canonicalId?.let { "canonical:$it" } ?: run {
+            val identity = CanonicalMatcher.keyOf(movie.name, movie.year)
+            "heuristic:${identity.titleKey}|${identity.year ?: ""}"
+        }
         val existing = byKey[key]
         if (existing == null || movie.qualityRank > existing.qualityRank) byKey[key] = movie
     }
@@ -187,6 +194,7 @@ internal fun collapseMovieVariants(movies: List<Movie>): List<MovieVariantGroup>
  * merges rather than wipes and carries favourites, hidden flags and manual ordering across.
  */
 class CatalogRepository(
+    private val database: OpenTvDatabase,
     private val sourceDao: SourceDao,
     private val channelDao: ChannelDao,
     private val categoryDao: CategoryDao,
@@ -203,6 +211,23 @@ class CatalogRepository(
     private val http: OkHttpClient,
     private val settings: AppSettings,
 ) {
+    private data class AvailabilityCandidates(
+        val tmdbIds: Set<String>,
+        val yearsByTitleKey: Map<String, Set<Int?>>,
+    )
+
+    private fun List<CanonicalContent>.asAvailabilityCandidates(): AvailabilityCandidates =
+        AvailabilityCandidates(
+            tmdbIds = mapNotNullTo(hashSetOf()) { it.tmdbId?.takeIf(String::isNotBlank) },
+            yearsByTitleKey = groupBy(CanonicalContent::titleKey)
+                .mapValues { (_, matches) -> matches.mapTo(hashSetOf()) { it.year } },
+        )
+
+    private fun AvailabilityCandidates.contains(item: TmdbListItem): Boolean {
+        if (item.tmdbId in tmdbIds) return true
+        val years = yearsByTitleKey[CanonicalMatcher.keyOf(item.title, item.year).titleKey] ?: return false
+        return years.any { localYear -> localYear == null || item.year == null || localYear == item.year }
+    }
 
     /** TMDB back-fill for VOD detail pages, gated on a user-supplied key. See [TmdbClient]. */
     private val tmdb = TmdbClient(http, settings)
@@ -304,6 +329,28 @@ class CatalogRepository(
 
     suspend fun episode(id: Long): Episode? = episodeDao.byId(id)
 
+    /** Cached episode list for the show containing [localEpisodeId]. No network request. */
+    suspend fun seriesEpisodes(localEpisodeId: Long): List<Episode> = withContext(Dispatchers.IO) {
+        val current = episodeDao.byId(localEpisodeId) ?: return@withContext emptyList()
+        episodeDao.forSeries(current.sourceId, current.seriesId)
+    }
+
+    /** Route-sized playback target for any episode selected inside the player. */
+    suspend fun episodePlayback(localEpisodeId: Long): NextEpisodePlayback? = withContext(Dispatchers.IO) {
+        val chosen = episodeDao.byId(localEpisodeId) ?: return@withContext null
+        val canonicalEpisodeId = chosen.canonicalEpisodeId ?: return@withContext null
+        val canonicalEpisode = canonicalEpisodeDao.byId(canonicalEpisodeId) ?: return@withContext null
+        val source = sourceDao.byId(chosen.sourceId)
+        NextEpisodePlayback(
+            mediaKey = "ep:${chosen.id}",
+            streamUrl = chosen.streamUrl,
+            title = "S${chosen.season}E${chosen.episodeNumber} · ${chosen.title}",
+            userAgent = source?.userAgent ?: "TufaraTV/0.1 (Android)",
+            contentKey = "series:${canonicalEpisode.canonicalSeriesId}",
+            variantsKey = "episode:$canonicalEpisodeId",
+        )
+    }
+
     /**
      * Resolves the episode immediately following [localEpisodeId] in canonical series order.
      *
@@ -328,15 +375,7 @@ class CatalogRepository(
         val chosen = rows.firstOrNull { it.sourceId == current.sourceId }
             ?: rows.maxByOrNull { it.qualityRank }
             ?: return@withContext null
-        val source = sourceDao.byId(chosen.sourceId)
-        NextEpisodePlayback(
-            mediaKey = "ep:${chosen.id}",
-            streamUrl = chosen.streamUrl,
-            title = "S${next.season}E${next.episodeNumber} · ${next.title}",
-            userAgent = source?.userAgent ?: "TufaraTV/0.1 (Android)",
-            contentKey = "series:${next.canonicalSeriesId}",
-            variantsKey = "episode:${next.id}",
-        )
+        episodePlayback(chosen.id)
     }
 
     suspend fun movieByStreamUrl(url: String): Movie? = movieDao.byStreamUrl(url)
@@ -379,6 +418,10 @@ class CatalogRepository(
     /** Every series, newest first, deduped. See [allMovies]. */
     suspend fun allSeries(): List<Series> =
         withContext(Dispatchers.IO) { dedupeSeriesByCanonical(seriesDao.all()) }
+
+    fun observeFavouriteMovies(): Flow<List<Movie>> = movieDao.observeFavourites()
+
+    fun observeFavouriteSeries(): Flow<List<Series>> = seriesDao.observeFavourites()
 
     /** How many movies / series are on disk — a cheap COUNT the home screen uses to tell "the
      *  library grew" from "unchanged since last open" without loading every row. */
@@ -1091,24 +1134,38 @@ class CatalogRepository(
                     .firstOrNull { it.year == null || year == null || it.year == year }
             }
             canonical?.let { seriesDao.byCanonicalIds(listOf(it.id)).firstOrNull()?.id }
+                ?: seriesDao.all().firstOrNull { local ->
+                    val localKey = CanonicalMatcher.keyOf(local.name, local.year)
+                    localKey.titleKey == CanonicalMatcher.keyOf(title, year).titleKey &&
+                        (local.year == null || year == null || local.year == year)
+                }?.id
         }
 
     /** Narrows a TMDB browse-list page down to titles this device can actually watch — every item's
      *  [movieAvailabilityForTmdb]/[localSeriesIdForTmdb] lookup run concurrently, still a purely
      *  local/indexed check. Home and Search rows use this so a poster is never a dead end. */
     suspend fun filterAvailable(items: List<TmdbListItem>): List<TmdbListItem> = withContext(Dispatchers.IO) {
-        coroutineScope {
-            items.map { item ->
-                async {
-                    val available = if (item.isMovie) {
-                        movieAvailabilityForTmdb(item.tmdbId, item.title, item.year).canonicalId != null
-                    } else {
-                        localSeriesIdForTmdb(item.tmdbId, item.title, item.year) != null
-                    }
-                    item to available
-                }
-            }.awaitAll()
-        }.filter { it.second }.map { it.first }
+        val movieItems = items.filter(TmdbListItem::isMovie)
+        val seriesItems = items.filterNot(TmdbListItem::isMovie)
+        val movies = movieItems.takeIf { it.isNotEmpty() }?.let { requested ->
+            canonicalMovieDao.availabilityCandidates(
+                tmdbIds = requested.map(TmdbListItem::tmdbId).distinct(),
+                titleKeys = requested.map {
+                    CanonicalMatcher.keyOf(it.title, it.year).titleKey
+                }.distinct(),
+            ).asAvailabilityCandidates()
+        }
+        val series = seriesItems.takeIf { it.isNotEmpty() }?.let { requested ->
+            canonicalSeriesDao.availabilityCandidates(
+                tmdbIds = requested.map(TmdbListItem::tmdbId).distinct(),
+                titleKeys = requested.map {
+                    CanonicalMatcher.keyOf(it.title, it.year).titleKey
+                }.distinct(),
+            ).asAvailabilityCandidates()
+        }
+        items.filter { item ->
+            if (item.isMovie) movies?.contains(item) == true else series?.contains(item) == true
+        }.distinctBy { it.tmdbId }
     }
 
     // ---- TMDB browse catalog: thin IO-dispatched pass-throughs to TmdbClient ----------------------
@@ -1146,14 +1203,19 @@ class CatalogRepository(
      *  request after another, so a dozen-genre row of shelves still lands in about one round trip's
      *  worth of time. A genre with no results (rare, but possible for a niche TV genre) is dropped
      *  rather than shown empty. */
-    suspend fun tmdbGenreRows(isMovie: Boolean, maxGenres: Int = 14, perGenre: Int = 20): List<GenreGroup<TmdbListItem>> =
+    suspend fun tmdbGenreRows(isMovie: Boolean, maxGenres: Int = 12, perGenre: Int = 60): List<GenreGroup<TmdbListItem>> =
         withContext(Dispatchers.IO) {
             val genres = runCatching { tmdb.genres(isMovie) }.getOrDefault(emptyList()).take(maxGenres)
             coroutineScope {
                 genres.map { genre ->
                     async {
-                        val items = runCatching { tmdb.discoverByGenre(isMovie, genre.id) }
-                            .getOrDefault(emptyList())
+                        // A provider title may sit beyond TMDB's first 20 global results. Scan a
+                        // few pages so the strict provider-availability filter still leaves enough
+                        // populated genre shelves to feel like a complete streaming catalogue.
+                        val items = (1..2).flatMap { page ->
+                            runCatching { tmdb.discoverByGenre(isMovie, genre.id, page) }
+                                .getOrDefault(emptyList())
+                        }.distinctBy { it.tmdbId }
                             .take(perGenre)
                         GenreGroup(genre.name, items)
                     }
@@ -1206,7 +1268,9 @@ class CatalogRepository(
 
     /** Links every movie this sync just wrote (and hasn't linked yet) into the canonical catalog. */
     private suspend fun linkMoviesToCanonical(sourceId: Long) {
-        for (movie in movieDao.pendingCanonicalLink(sourceId)) {
+        movieDao.pendingCanonicalLink(sourceId).chunked(CANONICAL_LINK_BATCH_SIZE).forEach { batch ->
+            database.withTransaction {
+                for (movie in batch) {
             val candidate = CanonicalMatcher.Candidate(movie.name, movie.year, movie.tmdbId)
             val existingByTmdb = movie.tmdbId?.let { canonicalMovieDao.findByTmdbId(it) }
             val decision = CanonicalMatcher.decide(
@@ -1225,12 +1289,16 @@ class CatalogRepository(
                 CanonicalMatcher.Action.CREATE_NEW -> canonicalMovieDao.insert(newCanonicalFromMovie(decision, movie))
             }
             movieDao.setCanonical(movie.id, canonicalId, decision.matchKind)
+                }
+            }
         }
     }
 
     /** Links every series this sync just wrote (and hasn't linked yet) into the canonical catalog. */
     private suspend fun linkSeriesToCanonical(sourceId: Long) {
-        for (series in seriesDao.pendingCanonicalLink(sourceId)) {
+        seriesDao.pendingCanonicalLink(sourceId).chunked(CANONICAL_LINK_BATCH_SIZE).forEach { batch ->
+            database.withTransaction {
+                for (series in batch) {
             val candidate = CanonicalMatcher.Candidate(series.name, series.year, series.tmdbId)
             val existingByTmdb = series.tmdbId?.let { canonicalSeriesDao.findByTmdbId(it) }
             val decision = CanonicalMatcher.decide(
@@ -1249,6 +1317,8 @@ class CatalogRepository(
                 CanonicalMatcher.Action.CREATE_NEW -> canonicalSeriesDao.insert(newCanonicalFromSeries(decision, series))
             }
             seriesDao.setCanonical(series.id, canonicalId, decision.matchKind)
+                }
+            }
         }
     }
 
@@ -1381,7 +1451,7 @@ class CatalogRepository(
             throw e
         } catch (e: Exception) {
             Log.w(TAG, "Catalogue sync failed for source ${source.id}", e)
-            SyncResult.Failed(e.message ?: "The catalogue could not be downloaded.", e)
+            SyncResult.Failed(e.message ?: "Impossible de télécharger le catalogue.", e)
         }
     }
 
@@ -1394,15 +1464,19 @@ class CatalogRepository(
     suspend fun syncVod(
         source: Source,
         nowUtcMillis: Long,
+        includeMovies: Boolean = settings.moviesEnabled.value,
+        includeSeries: Boolean = settings.seriesEnabled.value,
         onProgress: ((movies: Int, series: Int) -> Unit)? = null,
     ) = withContext(Dispatchers.IO) {
         runCatching {
             when (source.kind) {
-                SourceKind.XTREAM -> syncXtreamVod(source, nowUtcMillis, onProgress)
-                SourceKind.STALKER -> syncStalkerVod(source, onProgress)
+                SourceKind.XTREAM -> syncXtreamVod(source, nowUtcMillis, includeMovies, includeSeries, onProgress)
+                SourceKind.STALKER -> syncStalkerVod(source, includeMovies, includeSeries, onProgress)
                 SourceKind.M3U -> {}
             }
         }.onFailure { Log.w(TAG, "VOD sync failed for source ${source.id}", it) }
+            .also {
+            }
     }
 
     private suspend fun syncXtreamLive(source: Source, nowUtcMillis: Long): SyncResult {
@@ -1414,7 +1488,7 @@ class CatalogRepository(
         val channels = api.liveStreams(source)
         if (channels.isEmpty()) {
             return SyncResult.Failed(
-                "The server returned no channels. The account may have no package assigned.",
+                "Le serveur n’a renvoyé aucune chaîne. Aucun forfait n’est peut-être associé au compte.",
                 null,
             )
         }
@@ -1437,7 +1511,7 @@ class CatalogRepository(
         val channels = stalkerApi.liveChannels(source)
         if (channels.isEmpty()) {
             return SyncResult.Failed(
-                "The portal returned no channels. The MAC may not be authorised, or its package is empty.",
+                "Le portail n’a renvoyé aucune chaîne. L’adresse MAC n’est peut-être pas autorisée ou son forfait est vide.",
                 null,
             )
         }
@@ -1463,13 +1537,15 @@ class CatalogRepository(
     private suspend fun syncXtreamVod(
         source: Source,
         nowUtcMillis: Long,
+        includeMovies: Boolean,
+        includeSeries: Boolean,
         onProgress: ((movies: Int, series: Int) -> Unit)? = null,
     ) {
         // VOD is optional: plenty of accounts have live TV only, and a 404 on get_vod_streams
         // must not cost the user their channel list. Movies and series are gated independently so
         // a user who only turned off, say, Series still gets their movie library refreshed.
-        val moviesOn = settings.moviesEnabled.value
-        val seriesOn = settings.seriesEnabled.value
+        val moviesOn = settings.moviesEnabled.value && includeMovies
+        val seriesOn = settings.seriesEnabled.value && includeSeries
         if (!moviesOn && !seriesOn) return
 
         val movieCategories =
@@ -1506,10 +1582,12 @@ class CatalogRepository(
      */
     private suspend fun syncStalkerVod(
         source: Source,
+        includeMovies: Boolean,
+        includeSeries: Boolean,
         onProgress: ((movies: Int, series: Int) -> Unit)? = null,
     ) {
-        val moviesOn = settings.moviesEnabled.value
-        val seriesOn = settings.seriesEnabled.value
+        val moviesOn = settings.moviesEnabled.value && includeMovies
+        val seriesOn = settings.seriesEnabled.value && includeSeries
         if (!moviesOn && !seriesOn) return
 
         if (moviesOn) {
@@ -1523,31 +1601,72 @@ class CatalogRepository(
 
         var movieCount = 0
         var seriesCount = 0
-        var sawMovies = false
-        if (moviesOn) {
-            runCatching {
-                stalkerApi.vodMovies(source) { batch ->
-                    sawMovies = true
-                    movieDao.upsertAll(stampedMovieQuality(batch))
-                    movieCount += batch.size
-                    onProgress?.invoke(movieCount, seriesCount)
-                }
-            }.onFailure { Log.w(TAG, "Stalker movie sync failed for source ${source.id}", it) }
-        }
-        if (sawMovies) linkMoviesToCanonical(source.id)
-
+        // Series first: a provider can expose tens of thousands of movies. Making shows wait for
+        // that entire crawl left their categories visible but their catalogue empty whenever the
+        // app was closed before the movie pass finished.
         var sawSeries = false
         if (seriesOn) {
+            val writeMutex = Mutex()
+            val pending = ArrayList<Series>(STALKER_DB_BATCH_SIZE)
             runCatching {
                 stalkerApi.seriesList(source) { batch ->
-                    sawSeries = true
-                    seriesDao.upsertAll(stampedSeriesQuality(batch))
-                    seriesCount += batch.size
-                    onProgress?.invoke(movieCount, seriesCount)
+                    writeMutex.withLock {
+                        pending += batch
+                        if (pending.size >= STALKER_DB_BATCH_SIZE) {
+                            val chunk = pending.toList()
+                            pending.clear()
+                            sawSeries = true
+                            seriesDao.upsertAll(stampedSeriesQuality(chunk))
+                            seriesCount += chunk.size
+                            onProgress?.invoke(movieCount, seriesCount)
+                        }
+                    }
+                }
+                writeMutex.withLock {
+                    if (pending.isNotEmpty()) {
+                        val chunk = pending.toList()
+                        pending.clear()
+                        sawSeries = true
+                        seriesDao.upsertAll(stampedSeriesQuality(chunk))
+                        seriesCount += chunk.size
+                        onProgress?.invoke(movieCount, seriesCount)
+                    }
                 }
             }.onFailure { Log.w(TAG, "Stalker series sync failed for source ${source.id}", it) }
         }
         if (sawSeries) linkSeriesToCanonical(source.id)
+
+        var sawMovies = false
+        if (moviesOn) {
+            val writeMutex = Mutex()
+            val pending = ArrayList<Movie>(STALKER_DB_BATCH_SIZE)
+            runCatching {
+                stalkerApi.vodMovies(source) { batch ->
+                    writeMutex.withLock {
+                        pending += batch
+                        if (pending.size >= STALKER_DB_BATCH_SIZE) {
+                            val chunk = pending.toList()
+                            pending.clear()
+                            sawMovies = true
+                            movieDao.upsertAll(stampedMovieQuality(chunk))
+                            movieCount += chunk.size
+                            onProgress?.invoke(movieCount, seriesCount)
+                        }
+                    }
+                }
+                writeMutex.withLock {
+                    if (pending.isNotEmpty()) {
+                        val chunk = pending.toList()
+                        pending.clear()
+                        sawMovies = true
+                        movieDao.upsertAll(stampedMovieQuality(chunk))
+                        movieCount += chunk.size
+                        onProgress?.invoke(movieCount, seriesCount)
+                    }
+                }
+            }.onFailure { Log.w(TAG, "Stalker movie sync failed for source ${source.id}", it) }
+        }
+        if (sawMovies) linkMoviesToCanonical(source.id)
     }
 
     /**
@@ -1618,16 +1737,16 @@ class CatalogRepository(
 
         val parsed = http.newCall(request).execute().use { response ->
             if (!response.isSuccessful) {
-                return SyncResult.Failed("Playlist download failed (HTTP ${response.code}).", null)
+                return SyncResult.Failed("Échec du téléchargement de la liste (HTTP ${response.code}).", null)
             }
             val stream = response.body?.byteStream()
-                ?: return SyncResult.Failed("The playlist was empty.", null)
+                ?: return SyncResult.Failed("La liste de lecture est vide.", null)
             M3uParser.parse(stream, source.id)
         }
 
         if (parsed.channels.isEmpty() && parsed.movies.isEmpty() && parsed.series.isEmpty()) {
             return SyncResult.Failed(
-                "No playable entries found in that playlist. Check the URL points at an M3U/M3U+ file.",
+                "Aucune entrée lisible dans cette liste. Vérifiez que l’adresse pointe vers un fichier M3U/M3U+.",
                 null,
             )
         }
@@ -1851,6 +1970,9 @@ class CatalogRepository(
 
     companion object {
         private const val TAG = "CatalogRepository"
+        /** Coalesce tiny Stalker pages so Room invalidates VOD screens tens, not thousands, of times. */
+        private const val STALKER_DB_BATCH_SIZE = 500
+        private const val CANONICAL_LINK_BATCH_SIZE = 250
         val SEPARATOR_CHARS = setOf('#', '*', '=', '~', '-', '_', '•', '█', '▓', '|')
 
         /**

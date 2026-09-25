@@ -490,6 +490,10 @@ fun SeriesDetailScreen(
             .mapValues { (_, eps) -> eps.sortedBy { it.episodeNumber } }
             .toSortedMap()
     }
+    var selectedSeason by remember(s.id) { mutableStateOf<Int?>(null) }
+    LaunchedEffect(seasons.keys) {
+        if (selectedSeason !in seasons.keys) selectedSeason = seasons.keys.firstOrNull()
+    }
 
     LazyColumn(Modifier.fillMaxSize()) {
         item(key = "header") {
@@ -519,6 +523,31 @@ fun SeriesDetailScreen(
                 }
             }
         }
+        if (episodes.isEmpty()) {
+            item(key = "eploading") {
+                Text(
+                    stringResource(R.string.vod_loading_episodes),
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
+                )
+            }
+        } else {
+            item(key = "season-picker") {
+                LazyRow(
+                    contentPadding = PaddingValues(horizontal = 24.dp, vertical = 12.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(seasons.keys.toList(), key = { it }) { season ->
+                        SeasonChip(
+                            label = stringResource(R.string.vod_season, season),
+                            selected = season == selectedSeason,
+                            onClick = { selectedSeason = season },
+                        )
+                    }
+                }
+            }
+        }
+
         item(key = "info") {
             DetailInfo(
                 plot = tmdbMeta?.overview ?: s.plot,
@@ -529,23 +558,9 @@ fun SeriesDetailScreen(
             )
         }
 
-        if (episodes.isEmpty()) {
-            item(key = "eploading") {
-                Text(
-                    stringResource(R.string.vod_loading_episodes),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(horizontal = 24.dp, vertical = 12.dp),
-                )
-            }
-        } else {
-            seasons.forEach { (season, eps) ->
-                item(key = "season:$season") {
-                    Spacer(Modifier.height(8.dp))
-                    SectionHeader(stringResource(R.string.vod_season, season))
-                }
-                items(eps, key = { it.id }) { ep ->
-                    EpisodeRow(ep, s.canonicalId, onPlayEpisode)
-                }
+        if (episodes.isNotEmpty()) {
+            items(seasons[selectedSeason].orEmpty(), key = { it.id }) { ep ->
+                EpisodeRow(ep, s.canonicalId, onPlayEpisode)
             }
         }
 
@@ -556,6 +571,33 @@ fun SeriesDetailScreen(
             }
         }
     }
+}
+
+/** TV-focusable season selector: one horizontal hop instead of scrolling through every episode. */
+@Composable
+private fun SeasonChip(label: String, selected: Boolean, onClick: () -> Unit) {
+    var focused by remember { mutableStateOf(false) }
+    val background = when {
+        focused -> MaterialTheme.colorScheme.primary
+        selected -> MaterialTheme.colorScheme.primaryContainer
+        else -> MaterialTheme.colorScheme.surfaceVariant
+    }
+    val content = when {
+        focused -> MaterialTheme.colorScheme.onPrimary
+        selected -> MaterialTheme.colorScheme.onPrimaryContainer
+        else -> MaterialTheme.colorScheme.onSurfaceVariant
+    }
+    Text(
+        text = label,
+        color = content,
+        style = MaterialTheme.typography.titleMedium,
+        modifier = Modifier
+            .onFocusChanged { focused = it.isFocused }
+            .clip(RoundedCornerShape(999.dp))
+            .background(background)
+            .clickable(onClick = onClick)
+            .padding(horizontal = 18.dp, vertical = 10.dp),
+    )
 }
 
 // ---- Shared detail pieces ----------------------------------------------------------------------
