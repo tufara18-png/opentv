@@ -31,8 +31,8 @@ fun OpenTvTellyHost() {
         multiviewDeps = graph.multiview,
         vodDeps = graph.vod,
         onEnterPip = { (context as? MainActivity)?.enterPipNow() },
-        reminders = null,
-        recordingDeps = null,
+        reminders = graph.reminders,
+        recordingDeps = graph.recording,
         onboardingRestore = null,
     )
 }
