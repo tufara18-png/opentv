@@ -31,6 +31,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 
 /**
  * Production dependency graph for the Telly Android-TV frontend.
@@ -68,40 +69,60 @@ class OpenTvTellyGraph(context: Context) {
                         macAddress = draft.macAddress.takeIf { it.isNotBlank() },
                     )
 
-                openTv.sourceRepository.test(source).getOrThrow()
+                val tested =
+                    withTimeoutOrNull(PROVIDER_TEST_TIMEOUT_MS) {
+                        openTv.sourceRepository.test(source)
+                    } ?: error("Connexion au fournisseur expirée après 20 secondes. Vérifiez l’adresse, le port et les identifiants.")
+                tested.getOrThrow()
+
                 val id = openTv.sourceRepository.save(source)
                 val saved = openTv.sourceRepository.byId(id)
                     ?: error("Provider was not saved")
-                val sync = openTv.catalogRepository.syncLive(saved, System.currentTimeMillis())
-                if (sync is app.tufaratv.data.repo.CatalogRepository.SyncResult.Failed) {
-                    Log.e(
-                        TAG,
-                        "Provider catalogue sync failed kind=${saved.kind} host=${hostOf(saved.url)} reason=${sync.reason}",
-                        sync.cause,
-                    )
-                    openTv.database.sources().delete(id)
-                    error(sync.reason)
-                }
+
                 Log.i(
                     TAG,
-                    "Provider live sync complete kind=${saved.kind} sourceId=${saved.id}",
+                    "Provider authenticated kind=${saved.kind} sourceId=${saved.id}; onboarding complete, syncing in background",
                 )
+
                 syncScope.launch {
-                    runCatching {
-                        openTv.catalogRepository.syncVod(
-                            saved,
-                            System.currentTimeMillis(),
-                        )
-                    }.onFailure {
-                        Log.w(TAG, "Background VOD sync failed for source ${saved.id}", it)
-                    }
-                    runCatching {
-                        openTv.epgRepository.syncAll(
-                            nowUtcMillis = System.currentTimeMillis(),
-                            force = true,
-                        )
-                    }.onFailure {
-                        Log.w(TAG, "Background EPG sync failed for source ${saved.id}", it)
+                    val live =
+                        withTimeoutOrNull(LIVE_SYNC_TIMEOUT_MS) {
+                            openTv.catalogRepository.syncLive(saved, System.currentTimeMillis())
+                        }
+                    when (live) {
+                        null ->
+                            Log.e(
+                                TAG,
+                                "Background live sync timed out kind=${saved.kind} sourceId=${saved.id}",
+                            )
+                        is app.tufaratv.data.repo.CatalogRepository.SyncResult.Failed ->
+                            Log.e(
+                                TAG,
+                                "Background live sync failed kind=${saved.kind} host=${hostOf(saved.url)} reason=${live.reason}",
+                                live.cause,
+                            )
+                        is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success -> {
+                            Log.i(
+                                TAG,
+                                "Background live sync complete kind=${saved.kind} sourceId=${saved.id} channels=${live.channelCount}",
+                            )
+                            runCatching {
+                                openTv.catalogRepository.syncVod(
+                                    saved,
+                                    System.currentTimeMillis(),
+                                )
+                            }.onFailure {
+                                Log.w(TAG, "Background VOD sync failed for source ${saved.id}", it)
+                            }
+                            runCatching {
+                                openTv.epgRepository.syncAll(
+                                    nowUtcMillis = System.currentTimeMillis(),
+                                    force = true,
+                                )
+                            }.onFailure {
+                                Log.w(TAG, "Background EPG sync failed for source ${saved.id}", it)
+                            }
+                        }
                     }
                 }
                 Unit
@@ -323,6 +344,8 @@ class OpenTvTellyGraph(context: Context) {
 
     private companion object {
         const val TAG = "OpenTvTellyGraph"
+        const val PROVIDER_TEST_TIMEOUT_MS = 20_000L
+        const val LIVE_SYNC_TIMEOUT_MS = 120_000L
     }
 
     val settings: SettingsGraph =
