@@ -1268,7 +1268,9 @@ class CatalogRepository(
 
     /** Links every movie this sync just wrote (and hasn't linked yet) into the canonical catalog. */
     private suspend fun linkMoviesToCanonical(sourceId: Long) {
-        movieDao.pendingCanonicalLink(sourceId).chunked(CANONICAL_LINK_BATCH_SIZE).forEach { batch ->
+        while (true) {
+            val batch = movieDao.pendingCanonicalLinkBatch(sourceId, CANONICAL_LINK_BATCH_SIZE)
+            if (batch.isEmpty()) break
             database.withTransaction {
                 for (movie in batch) {
             val candidate = CanonicalMatcher.Candidate(movie.name, movie.year, movie.tmdbId)
@@ -1296,7 +1298,9 @@ class CatalogRepository(
 
     /** Links every series this sync just wrote (and hasn't linked yet) into the canonical catalog. */
     private suspend fun linkSeriesToCanonical(sourceId: Long) {
-        seriesDao.pendingCanonicalLink(sourceId).chunked(CANONICAL_LINK_BATCH_SIZE).forEach { batch ->
+        while (true) {
+            val batch = seriesDao.pendingCanonicalLinkBatch(sourceId, CANONICAL_LINK_BATCH_SIZE)
+            if (batch.isEmpty()) break
             database.withTransaction {
                 for (series in batch) {
             val candidate = CanonicalMatcher.Candidate(series.name, series.year, series.tmdbId)
