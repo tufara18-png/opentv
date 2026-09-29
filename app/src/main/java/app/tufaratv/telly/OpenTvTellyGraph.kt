@@ -63,8 +63,9 @@ class OpenTvTellyGraph(context: Context) {
                 val saved = openTv.sourceRepository.byId(id)
                     ?: error("Provider was not saved")
                 val sync = openTv.catalogRepository.sync(saved, System.currentTimeMillis())
-                check(sync is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success) {
-                    "Provider connected, but loading the catalogue failed"
+                if (sync !is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success) {
+                    openTv.database.sources().delete(id)
+                    error("Provider connected, but loading the catalogue failed")
                 }
                 runCatching {
                     openTv.epgRepository.syncAll(
