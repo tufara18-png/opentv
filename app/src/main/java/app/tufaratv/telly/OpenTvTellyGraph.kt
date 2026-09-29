@@ -72,6 +72,7 @@ class OpenTvTellyGraph(context: Context) {
                         force = true,
                     )
                 }
+                Unit
             }
         }
     }
