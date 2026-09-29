@@ -63,7 +63,7 @@ class OpenTvVodItemDaoAdapter(
     private fun key(id: Long): String = PREFIX + id
 
     private companion object {
-        const val PREFIX = "opentv-movie:"
+        const val PREFIX = "movie:"
     }
 }
 
