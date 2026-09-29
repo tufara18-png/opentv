@@ -32,6 +32,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.Request
 
 /**
  * Production dependency graph for the Telly Android-TV frontend.
@@ -206,21 +207,58 @@ class OpenTvTellyGraph(context: Context) {
             },
         )
 
-    private val playlistFetcher =
-        M3uFetcher(
-            userAgentFor = TellyServiceLocator.playlistFetchUserAgentFor(appContext),
-        )
+    private val configuredPlaylistUserAgent =
+        TellyServiceLocator.playlistFetchUserAgentFor(appContext)
 
     suspend fun fetchPlaylist(url: String): String {
         Log.i(TAG, "M3U fetch start host=${hostOf(url)}")
-        return runCatching { playlistFetcher.fetch(url) }
-            .onSuccess { body ->
+
+        val userAgents =
+            listOfNotNull(
+                configuredPlaylistUserAgent(url)?.takeIf { it.isNotBlank() },
+                Source.DEFAULT_USER_AGENT,
+                "VLC/3.0.21 LibVLC/3.0.21",
+                "Mozilla/5.0 (Linux; Android 14; Android TV) AppleWebKit/537.36 Chrome/125.0 Mobile Safari/537.36",
+            ).distinct()
+
+        var lastFailure: Throwable? = null
+        for ((attempt, userAgent) in userAgents.withIndex()) {
+            val result =
+                runCatching {
+                    kotlinx.coroutines.withContext(Dispatchers.IO) {
+                        val request =
+                            Request.Builder()
+                                .url(url)
+                                .header("User-Agent", userAgent)
+                                .header("Accept", "*/*")
+                                .header("Accept-Encoding", "identity")
+                                .build()
+
+                        openTv.httpClient.newCall(request).execute().use { response ->
+                            Log.i(
+                                TAG,
+                                "M3U HTTP attempt=${attempt + 1} host=${hostOf(url)} status=${response.code} ua=${userAgent.substringBefore(' ')}",
+                            )
+                            if (!response.isSuccessful) {
+                                error("HTTP ${response.code} while downloading playlist")
+                            }
+                            response.body?.string()
+                                ?: error("Le serveur a renvoyé une playlist vide.")
+                        }
+                    }
+                }
+
+            result.onSuccess { body ->
                 Log.i(TAG, "M3U fetch success host=${hostOf(url)} bytes=${body.length}")
+                return body
             }
-            .onFailure {
-                Log.e(TAG, "M3U fetch failed host=${hostOf(url)}: ${it.message}", it)
-            }
-            .getOrThrow()
+            lastFailure = result.exceptionOrNull()
+        }
+
+        val failure =
+            lastFailure ?: IllegalStateException("Impossible de télécharger la playlist.")
+        Log.e(TAG, "M3U fetch failed host=${hostOf(url)}: ${failure.message}", failure)
+        throw failure
     }
 
     suspend fun hasSources(): Boolean = openTv.sourceRepository.enabled().isNotEmpty()
