@@ -34,7 +34,7 @@ class OpenTvProgramDaoAdapter(
         atMs: Long,
     ): Flow<List<ProgramEntity>> =
         programmes.observeWindowForChannels(tvgIds, atMs, Long.MAX_VALUE)
-            .map { rows -> rows.map(Programme::toTelly) }
+            .map { rows -> rows.map { it.toTelly() } }
 
     override suspend fun upsertAll(programs: List<ProgramEntity>) = readOnly()
 
