@@ -27,6 +27,10 @@ import com.johncorser.telly.features.reminders.RemindersHub
 import com.johncorser.telly.features.search.SearchDeps
 import com.johncorser.telly.features.settings.SettingsGraph
 import com.johncorser.telly.features.vod.VodDeps
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.launch
 
 /**
  * Production dependency graph for the Telly Android-TV frontend.
@@ -37,6 +41,7 @@ import com.johncorser.telly.features.vod.VodDeps
 class OpenTvTellyGraph(context: Context) {
     private val appContext = context.applicationContext
     private val openTv = OpenTvServiceLocator.get(appContext)
+    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
 
     init {
         OpenTvProviderBridge.install { draft ->
@@ -67,7 +72,7 @@ class OpenTvTellyGraph(context: Context) {
                 val id = openTv.sourceRepository.save(source)
                 val saved = openTv.sourceRepository.byId(id)
                     ?: error("Provider was not saved")
-                val sync = openTv.catalogRepository.sync(saved, System.currentTimeMillis())
+                val sync = openTv.catalogRepository.syncLive(saved, System.currentTimeMillis())
                 if (sync is app.tufaratv.data.repo.CatalogRepository.SyncResult.Failed) {
                     Log.e(
                         TAG,
@@ -77,11 +82,27 @@ class OpenTvTellyGraph(context: Context) {
                     openTv.database.sources().delete(id)
                     error(sync.reason)
                 }
-                runCatching {
-                    openTv.epgRepository.syncAll(
-                        nowUtcMillis = System.currentTimeMillis(),
-                        force = true,
-                    )
+                Log.i(
+                    TAG,
+                    "Provider live sync complete kind=${saved.kind} sourceId=${saved.id}",
+                )
+                syncScope.launch {
+                    runCatching {
+                        openTv.catalogRepository.syncVod(
+                            saved,
+                            System.currentTimeMillis(),
+                        )
+                    }.onFailure {
+                        Log.w(TAG, "Background VOD sync failed for source ${saved.id}", it)
+                    }
+                    runCatching {
+                        openTv.epgRepository.syncAll(
+                            nowUtcMillis = System.currentTimeMillis(),
+                            force = true,
+                        )
+                    }.onFailure {
+                        Log.w(TAG, "Background EPG sync failed for source ${saved.id}", it)
+                    }
                 }
                 Unit
             }.onFailure {
@@ -121,7 +142,7 @@ class OpenTvTellyGraph(context: Context) {
                     )
                 val source = openTv.sourceRepository.byId(id)
                     ?: error("OpenTV source was not created")
-                when (val sync = openTv.catalogRepository.sync(source, System.currentTimeMillis())) {
+                when (val sync = openTv.catalogRepository.syncLive(source, System.currentTimeMillis())) {
                     is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success -> Unit
                     is app.tufaratv.data.repo.CatalogRepository.SyncResult.Failed -> {
                         Log.e(
@@ -133,11 +154,18 @@ class OpenTvTellyGraph(context: Context) {
                         error(sync.reason)
                     }
                 }
+                Log.i(TAG, "M3U live sync complete sourceId=${source.id}")
                 if (!playlist.epgUrl.isNullOrBlank()) {
-                    openTv.epgRepository.syncAll(
-                        nowUtcMillis = System.currentTimeMillis(),
-                        force = true,
-                    )
+                    syncScope.launch {
+                        runCatching {
+                            openTv.epgRepository.syncAll(
+                                nowUtcMillis = System.currentTimeMillis(),
+                                force = true,
+                            )
+                        }.onFailure {
+                            Log.w(TAG, "Background M3U EPG sync failed for source ${source.id}", it)
+                        }
+                    }
                 }
             },
             changeSourceUrl = { sourceId, newUrl ->
