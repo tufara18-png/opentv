@@ -358,7 +358,7 @@ private data class DetectedXtream(
     val password: String,
 )
 
-private fun detectXtreamGetPhp(raw: String): DetectedXtream? {
+internal fun detectXtreamGetPhp(raw: String): DetectedXtream? {
     val value = raw.trim()
     val uri = runCatching { URI(value) }.getOrNull() ?: return null
     val path = uri.path.orEmpty()
