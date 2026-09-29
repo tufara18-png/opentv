@@ -110,6 +110,13 @@ class MainActivity : ComponentActivity() {
             ServiceLocator.get(this@MainActivity).sourceRepository.seedDefaultIfEmpty()
         }
 
+        if (isTelevision) {
+            setContent {
+                OpenTvTellyHost()
+            }
+            return
+        }
+
         setContent {
             val settings = remember { ServiceLocator.get(this).settings }
             val themeMode by settings.themeMode.collectAsState()
@@ -124,7 +131,7 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxSize(),
                     color = MaterialTheme.colorScheme.background,
                 ) {
-                    TufaraTvApp(isTelevision = isTelevision)
+                    TufaraTvApp(isTelevision = false)
                 }
             }
         }
@@ -285,11 +292,6 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
     val bootContext = androidx.compose.ui.platform.LocalContext.current
     val bootSettings = remember { ServiceLocator.get(bootContext).settings }
-
-    if (isTelevision) {
-        OpenTvTellyHost(hasSources = sourcesUi.sources.isNotEmpty())
-        return
-    }
 
     // First run, or a first-run preparation interrupted after credentials were saved, returns to
     // onboarding. Existing installs default libraryPrepared=true and are never forced through it.
