@@ -118,7 +118,7 @@ class XtreamApi(
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun streamLiveStreams(
         source: Source,
-        batchSize: Int = 250,
+        batchSize: Int = 2_000,
         onBatch: suspend (List<Channel>) -> Unit,
     ): Int = withContext(Dispatchers.IO) {
         val builder = baseUrl(source).newBuilder()
@@ -186,7 +186,7 @@ class XtreamApi(
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun streamMovies(
         source: Source,
-        batchSize: Int = 200,
+        batchSize: Int = 1_000,
         onBatch: suspend (List<Movie>) -> Unit,
     ): Int = withContext(Dispatchers.IO) {
         streamJsonArray(source, "get_vod_streams", batchSize, ::movieFromJson, onBatch)
@@ -227,7 +227,7 @@ class XtreamApi(
     @OptIn(ExperimentalSerializationApi::class)
     suspend fun streamSeries(
         source: Source,
-        batchSize: Int = 200,
+        batchSize: Int = 1_000,
         onBatch: suspend (List<Series>) -> Unit,
     ): Int = withContext(Dispatchers.IO) {
         streamJsonArray(source, "get_series", batchSize, ::seriesFromJson, onBatch)
