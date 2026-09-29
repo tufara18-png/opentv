@@ -74,6 +74,8 @@ class OpenTvChannelDaoAdapter(
         channels.deleteForSource(playlistId)
     }
 
+    override suspend fun insertAll(channels: List<ChannelEntity>) = readOnly()
+
     override suspend fun byId(id: Long): ChannelEntity? = channels.byId(id)?.toTelly()
 
     override fun observeById(id: Long): Flow<ChannelEntity?> =
@@ -130,6 +132,9 @@ class OpenTvChannelDaoAdapter(
             ),
         )
     }
+
+    private fun readOnly(): Nothing =
+        error("OpenTV owns channel writes; Telly is connected as a frontend")
 
     private fun categoryKey(sourceId: Long, categoryId: String): String = "$sourceId:$categoryId"
 }
