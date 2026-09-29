@@ -171,6 +171,20 @@ interface ChannelDao {
     )
     fun searchIncludingHidden(query: String, limit: Int = 200): Flow<List<Channel>>
 
+    @Query(
+        """
+        SELECT * FROM channels
+        WHERE hidden = 0
+          AND (
+            (' ' || COALESCE(NULLIF(customName, ''), displayName)) LIKE :nameLike ESCAPE '\\'
+            OR CAST(COALESCE(number, 0) AS TEXT) LIKE :numberLike ESCAPE '\\'
+          )
+        ORDER BY COALESCE(NULLIF(customName, ''), displayName) COLLATE NOCASE, sortIndex
+        LIMIT :limit
+        """
+    )
+    suspend fun searchForTelly(nameLike: String, numberLike: String, limit: Int = 200): List<Channel>
+
     @Query("SELECT * FROM channels WHERE id = :id")
     suspend fun byId(id: Long): Channel?
 
@@ -429,6 +443,24 @@ interface ProgrammeDao {
         """
     )
     fun observeNow(nowUtcMillis: Long): Flow<List<Programme>>
+
+    @Query("SELECT DISTINCT epgChannelId FROM programmes ORDER BY epgChannelId")
+    fun observeChannelIdsWithProgrammes(): Flow<List<String>>
+
+    @Query(
+        """
+        SELECT * FROM programmes
+        WHERE endUtcMillis > :atUtcMillis
+          AND (' ' || title) LIKE :titleLike ESCAPE '\\'
+        ORDER BY startUtcMillis, epgChannelId
+        LIMIT :limit
+        """
+    )
+    suspend fun searchFutureForTelly(
+        titleLike: String,
+        atUtcMillis: Long,
+        limit: Int,
+    ): List<Programme>
 
     @Query(
         """
