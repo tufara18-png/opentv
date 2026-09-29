@@ -47,9 +47,7 @@ android {
 }
 
 tasks.matching {
-    it.name.startsWith("ksp") ||
-        it.name.startsWith("compile") ||
-        it.name.contains("Sources", ignoreCase = true)
+    it.name.startsWith("ksp") || it.name.startsWith("compile")
 }.configureEach {
     dependsOn(syncTellySources)
 }
