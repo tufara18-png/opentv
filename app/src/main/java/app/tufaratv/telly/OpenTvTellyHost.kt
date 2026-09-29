@@ -23,7 +23,7 @@ fun OpenTvTellyHost() {
     RootScreen(
         navigator = navigator,
         repository = graph.playlists,
-        fetchPlaylist = { error("OpenTV owns playlist/provider refreshes") },
+        fetchPlaylist = graph::fetchPlaylist,
         playbackDeps = graph.playback,
         guideDeps = graph.guide,
         settingsGraph = graph.settings,
