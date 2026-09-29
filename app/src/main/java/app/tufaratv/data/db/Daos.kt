@@ -362,6 +362,38 @@ interface ChannelDao {
 
     @Query("SELECT * FROM channels WHERE sourceId = :sourceId")
     suspend fun userStateForSource(sourceId: Long): List<Channel>
+
+    @Query("SELECT * FROM channels WHERE sourceId = :sourceId AND streamId IN (:streamIds)")
+    suspend fun userStateForStreamIds(sourceId: Long, streamIds: List<String>): List<Channel>
+
+    @Transaction
+    suspend fun upsertCatalogueBatch(sourceId: Long, incoming: List<Channel>, syncStamp: Long) {
+        if (incoming.isEmpty()) return
+        val existing = userStateForStreamIds(sourceId, incoming.map { it.streamId })
+            .associateBy { it.streamId }
+        val merged = incoming.map { channel ->
+            val previous = existing[channel.streamId]
+            if (previous == null) {
+                channel.copy(lastSeenMillis = syncStamp)
+            } else {
+                channel.copy(
+                    id = previous.id,
+                    favourite = previous.favourite,
+                    hidden = previous.hidden || channel.hidden,
+                    sortIndex = previous.sortIndex,
+                    customName = previous.customName,
+                    epgOverrideId = previous.epgOverrideId,
+                    matchedEpgId = previous.matchedEpgId,
+                    lastSeenMillis = syncStamp,
+                )
+            }
+        }
+        upsertAll(merged)
+    }
+
+    suspend fun finishCatalogueSync(sourceId: Long, syncStamp: Long) {
+        deleteStale(sourceId, syncStamp)
+    }
 }
 
 @Dao
