@@ -1485,19 +1485,25 @@ class CatalogRepository(
         api.authenticate(source)
 
         val liveCategories = api.liveCategories(source)
-        val channels = api.liveStreams(source)
-        if (channels.isEmpty()) {
+        categoryDao.upsertAll(liveCategories)
+        val categoryNames = liveCategories.associate { it.id to it.name }
+
+        val count =
+            api.streamLiveStreams(source) { batch ->
+                val stamped = normalized(batch, categoryNames)
+                channelDao.upsertCatalogueBatch(source.id, stamped, nowUtcMillis)
+            }
+
+        if (count == 0) {
             return SyncResult.Failed(
                 "Le serveur n’a renvoyé aucune chaîne. Aucun forfait n’est peut-être associé au compte.",
                 null,
             )
         }
 
-        categoryDao.upsertAll(liveCategories)
-        val categoryNames = liveCategories.associate { it.id to it.name }
-        channelDao.replaceCatalogue(source.id, normalized(channels, categoryNames), nowUtcMillis)
+        channelDao.finishCatalogueSync(source.id, nowUtcMillis)
         sourceDao.markCatalogSynced(source.id, nowUtcMillis)
-        return SyncResult.Success(channels.size, 0, 0)
+        return SyncResult.Success(count, 0, 0)
     }
 
     /**
