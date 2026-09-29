@@ -352,7 +352,7 @@ private fun ProviderGuidance(
 }
 
 
-private data class DetectedXtream(
+internal data class DetectedXtream(
     val baseUrl: String,
     val username: String,
     val password: String,
