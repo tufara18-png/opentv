@@ -4,12 +4,10 @@ import app.tufaratv.data.db.CategoryDao as OpenTvCategoryDao
 import app.tufaratv.data.db.ChannelDao as OpenTvChannelDao
 import app.tufaratv.data.db.ProgrammeDao as OpenTvProgrammeDao
 import app.tufaratv.data.model.StreamKind
-import app.tufaratv.data.model.shownName
 import com.johncorser.telly.features.epg.db.ProgramDetails
 import com.johncorser.telly.features.epg.db.ProgramEntity
 import com.johncorser.telly.features.playlist.db.ChannelEntity
 import com.johncorser.telly.features.search.db.SearchDao
-import java.util.Locale
 
 /**
  * Search bridge that keeps Telly's search UI while querying OpenTV's catalogue.
@@ -20,8 +18,6 @@ class OpenTvSearchDaoAdapter(
     private val categories: OpenTvCategoryDao,
 ) : SearchDao {
     override suspend fun channels(nameLike: String, numberLike: String): List<ChannelEntity> {
-        val query = decodeLike(nameLike)
-        val numberPrefix = numberLike.removeSuffix("%").takeIf { it.isNotBlank() }
         val groups = categories.allByKind(StreamKind.LIVE)
             .associate { "${it.sourceId}:${it.id}" to it.name }
 
@@ -56,14 +52,6 @@ class OpenTvSearchDaoAdapter(
                 )
             }
             .toList()
-    }
-
-    private fun hasWordPrefix(value: String, query: String): Boolean {
-        val needle = query.lowercase(Locale.ROOT)
-        return value
-            .lowercase(Locale.ROOT)
-            .split(Regex("\\s+"))
-            .any { it.startsWith(needle) }
     }
 
     private fun decodeLike(pattern: String): String =
