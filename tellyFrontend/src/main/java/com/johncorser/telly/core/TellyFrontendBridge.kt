@@ -23,7 +23,9 @@ import com.johncorser.telly.features.playback.PlaybackTime
 import com.johncorser.telly.features.playback.PlayerKeymap
 import com.johncorser.telly.features.player.PlayerEngineFactory
 import com.johncorser.telly.features.player.skip.SkipSteps
+import com.johncorser.telly.features.playlist.M3uPlaylist
 import com.johncorser.telly.features.playlist.PlaylistRepository
+import com.johncorser.telly.features.playlist.StoredPlaylist
 import com.johncorser.telly.features.playlist.db.ChannelDao
 import com.johncorser.telly.features.search.SearchDeps
 import com.johncorser.telly.features.search.SearchHistory
@@ -39,6 +41,7 @@ import com.johncorser.telly.features.settings.SettingsStores
 import com.johncorser.telly.features.vod.VodDeps
 import com.johncorser.telly.features.vod.db.VodItemDao
 import com.johncorser.telly.features.vod.db.VodPositionDao
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 fun ServiceLocator.bridgedPlaybackDeps(
@@ -149,6 +152,8 @@ fun ServiceLocator.bridgedSettingsGraph(
     playlists: PlaylistRepository,
     channelDao: ChannelDao,
     positions: VodPositionDao,
+    refreshPlaylist: suspend (String) -> Boolean = { false },
+    refreshEpg: suspend () -> Int = { 0 },
 ): SettingsGraph {
     val settings = settingsRepository(context)
     return SettingsGraph(
@@ -159,10 +164,10 @@ fun ServiceLocator.bridgedSettingsGraph(
             SettingsActions(
                 updater =
                     PlaylistUpdater(
-                        fetchPlaylist = { error("OpenTV owns source refreshes") },
-                        repository = playlists,
+                        fetchPlaylist = { "#EXTM3U\n" },
+                        repository = RefreshPlaylistRepository(playlists, refreshPlaylist),
                     ),
-                updateEpgNow = { 0 },
+                updateEpgNow = refreshEpg,
                 backup = SettingsBackupManager(settings, playlists, context.filesDir),
                 clearVodPositions = positions::clearAll,
             ),
@@ -181,4 +186,25 @@ fun ServiceLocator.bridgedSettingsGraph(
                     ),
             ),
     )
+}
+
+
+private class RefreshPlaylistRepository(
+    private val delegate: PlaylistRepository,
+    private val refresh: suspend (String) -> Boolean,
+) : PlaylistRepository {
+    override val playlists: Flow<List<StoredPlaylist>> get() = delegate.playlists
+
+    override suspend fun add(sourceUrl: String, playlist: M3uPlaylist, name: String?) {
+        check(refresh(sourceUrl)) { "OpenTV source refresh failed" }
+    }
+
+    override suspend fun rename(sourceUrl: String, name: String) =
+        delegate.rename(sourceUrl, name)
+
+    override suspend fun changeUrl(oldUrl: String, newUrl: String): Boolean =
+        delegate.changeUrl(oldUrl, newUrl)
+
+    override suspend fun delete(sourceUrl: String) =
+        delegate.delete(sourceUrl)
 }
