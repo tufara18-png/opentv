@@ -7,6 +7,7 @@ package app.tufaratv
 
 import android.app.UiModeManager
 import android.content.Context
+import android.content.Intent
 import android.content.res.Configuration
 import android.os.Bundle
 import androidx.activity.ComponentActivity
@@ -19,6 +20,7 @@ import com.johncorser.telly.core.settings.TellySettings
 import com.johncorser.telly.core.settings.withAppLocale
 import com.johncorser.telly.features.pip.PipActivityBridge
 import com.johncorser.telly.features.pip.PipState
+import com.johncorser.telly.features.playback.TuneController
 
 /**
  * Single Telly UI entry point.
@@ -44,11 +46,35 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        handleLaunchIntent(intent)
         setContent {
             OpenTvTellyHost(
                 navigator = navigator,
                 onEnterPip = pip::enter,
             )
+        }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        handleLaunchIntent(intent)
+    }
+
+    private fun handleLaunchIntent(intent: Intent?) {
+        val channelId = intent?.getLongExtra(EXTRA_PLAY_CHANNEL, 0L) ?: 0L
+        if (channelId > 0L) {
+            TellyServiceLocator.keyValueStore(this).putLong(TuneController.LAST_CHANNEL_KEY, channelId)
+            navigator.replaceAll(Route.Playback)
+            intent?.removeExtra(EXTRA_PLAY_CHANNEL)
+        }
+
+        val recordingId = intent?.getLongExtra(EXTRA_WATCH_RECORDING, 0L) ?: 0L
+        if (recordingId > 0L) {
+            // Legacy OpenTV recording notifications can still exist after an upgrade.
+            // Open the Telly DVR surface rather than dropping the tap silently.
+            navigator.replaceAll(Route.Recordings)
+            intent?.removeExtra(EXTRA_WATCH_RECORDING)
         }
     }
 
