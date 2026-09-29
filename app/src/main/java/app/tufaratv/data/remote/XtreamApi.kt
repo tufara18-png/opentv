@@ -178,57 +178,118 @@ class XtreamApi(
 
     suspend fun movies(source: Source): List<Movie> = withContext(Dispatchers.IO) {
         getJson(source, "get_vod_streams").arrayOrEmpty.mapNotNull { element ->
-            val obj = element.jsonObjectOrNull ?: return@mapNotNull null
-            val streamId = obj["stream_id"].asStringOrNull ?: return@mapNotNull null
-            val name = obj["name"].asStringOrNull ?: return@mapNotNull null
-            val extension = obj["container_extension"].asStringOrNull?.takeIf { it.isNotBlank() }
-            Movie(
-                sourceId = source.id,
-                streamId = streamId,
-                name = name,
-                categoryId = obj["category_id"].asStringOrNull,
-                posterUrl = obj["stream_icon"].asStringOrNull?.takeIf { it.isNotBlank() },
-                rating = obj["rating"].asDoubleOrNull,
-                year = obj["year"].asIntOrNull,
-                plot = obj["plot"].asStringOrNull,
-                durationSeconds = obj["duration_secs"].asIntOrNull,
-                containerExtension = extension,
-                streamUrl = vodStreamUrl(source, streamId, extension),
-                addedMillis = obj["added"].asLongOrNull?.times(1000) ?: 0L,
-                // Rich metadata is best-effort here: the streams list carries it on some panels
-                // and not others. Whatever is missing is back-filled from get_vod_info on the
-                // first detail open. See asBackdropUrl for the array-or-string handling.
-                backdropUrl = obj.asBackdropUrl("movie_image", "cover_big"),
-                cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
-                director = obj["director"].asStringOrNull,
-                genre = obj["genre"].asStringOrNull,
-                tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
-            )
+            movieFromJson(source, element.jsonObjectOrNull)
         }
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun streamMovies(
+        source: Source,
+        batchSize: Int = 200,
+        onBatch: suspend (List<Movie>) -> Unit,
+    ): Int = withContext(Dispatchers.IO) {
+        streamJsonArray(source, "get_vod_streams", batchSize, ::movieFromJson, onBatch)
+    }
+
+    private fun movieFromJson(source: Source, obj: JsonObject?): Movie? {
+        obj ?: return null
+        val streamId = obj["stream_id"].asStringOrNull ?: return null
+        val name = obj["name"].asStringOrNull ?: return null
+        val extension = obj["container_extension"].asStringOrNull?.takeIf { it.isNotBlank() }
+        return Movie(
+            sourceId = source.id,
+            streamId = streamId,
+            name = name,
+            categoryId = obj["category_id"].asStringOrNull,
+            posterUrl = obj["stream_icon"].asStringOrNull?.takeIf { it.isNotBlank() },
+            rating = obj["rating"].asDoubleOrNull,
+            year = obj["year"].asIntOrNull,
+            plot = obj["plot"].asStringOrNull,
+            durationSeconds = obj["duration_secs"].asIntOrNull,
+            containerExtension = extension,
+            streamUrl = vodStreamUrl(source, streamId, extension),
+            addedMillis = obj["added"].asLongOrNull?.times(1000) ?: 0L,
+            backdropUrl = obj.asBackdropUrl("movie_image", "cover_big"),
+            cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
+            director = obj["director"].asStringOrNull,
+            genre = obj["genre"].asStringOrNull,
+            tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
+        )
     }
 
     suspend fun series(source: Source): List<Series> = withContext(Dispatchers.IO) {
         getJson(source, "get_series").arrayOrEmpty.mapNotNull { element ->
-            val obj = element.jsonObjectOrNull ?: return@mapNotNull null
-            val seriesId = obj["series_id"].asStringOrNull ?: return@mapNotNull null
-            val name = obj["name"].asStringOrNull ?: return@mapNotNull null
-            Series(
-                sourceId = source.id,
-                seriesId = seriesId,
-                name = name,
-                categoryId = obj["category_id"].asStringOrNull,
-                posterUrl = obj["cover"].asStringOrNull?.takeIf { it.isNotBlank() },
-                rating = obj["rating"].asDoubleOrNull,
-                year = obj["year"].asIntOrNull ?: obj["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
-                plot = obj["plot"].asStringOrNull,
-                addedMillis = obj["last_modified"].asLongOrNull?.times(1000) ?: 0L,
-                // get_series carries most of this inline on the majority of panels; anything
-                // missing is back-filled from get_series_info on the first detail open.
-                backdropUrl = obj.asBackdropUrl("cover_big", "cover"),
-                cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
-                genre = obj["genre"].asStringOrNull,
-                tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
-            )
+            seriesFromJson(source, element.jsonObjectOrNull)
+        }
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun streamSeries(
+        source: Source,
+        batchSize: Int = 200,
+        onBatch: suspend (List<Series>) -> Unit,
+    ): Int = withContext(Dispatchers.IO) {
+        streamJsonArray(source, "get_series", batchSize, ::seriesFromJson, onBatch)
+    }
+
+    private fun seriesFromJson(source: Source, obj: JsonObject?): Series? {
+        obj ?: return null
+        val seriesId = obj["series_id"].asStringOrNull ?: return null
+        val name = obj["name"].asStringOrNull ?: return null
+        return Series(
+            sourceId = source.id,
+            seriesId = seriesId,
+            name = name,
+            categoryId = obj["category_id"].asStringOrNull,
+            posterUrl = obj["cover"].asStringOrNull?.takeIf { it.isNotBlank() },
+            rating = obj["rating"].asDoubleOrNull,
+            year = obj["year"].asIntOrNull ?: obj["releaseDate"].asStringOrNull?.take(4)?.toIntOrNull(),
+            plot = obj["plot"].asStringOrNull,
+            addedMillis = obj["last_modified"].asLongOrNull?.times(1000) ?: 0L,
+            backdropUrl = obj.asBackdropUrl("cover_big", "cover"),
+            cast = obj["cast"].asStringOrNull ?: obj["actors"].asStringOrNull,
+            genre = obj["genre"].asStringOrNull,
+            tmdbId = obj["tmdb_id"].asStringOrNull ?: obj["tmdb"].asStringOrNull,
+        )
+    }
+
+    @OptIn(ExperimentalSerializationApi::class)
+    private suspend fun <T> streamJsonArray(
+        source: Source,
+        action: String,
+        batchSize: Int,
+        mapper: (Source, JsonObject?) -> T?,
+        onBatch: suspend (List<T>) -> Unit,
+    ): Int {
+        val builder = baseUrl(source).newBuilder()
+            .encodedPath("/player_api.php")
+            .addQueryParameter("username", source.username.orEmpty())
+            .addQueryParameter("password", source.password.orEmpty())
+            .addQueryParameter("action", action)
+
+        http.newCall(request(source, builder.build())).execute().use { response ->
+            if (!response.isSuccessful) throw XtreamException(describeHttpFailure(response.code))
+            val body = response.body ?: throw XtreamException("Le serveur a renvoyé une réponse vide.")
+
+            val pending = ArrayList<T>(batchSize)
+            var count = 0
+            val sequence =
+                json.decodeToSequence<JsonElement>(
+                    body.byteStream(),
+                    DecodeSequenceMode.ARRAY_WRAPPED,
+                )
+            for (element in sequence) {
+                mapper(source, element.jsonObjectOrNull)?.let { item ->
+                    pending += item
+                    count++
+                    if (pending.size >= batchSize) {
+                        onBatch(pending.toList())
+                        pending.clear()
+                    }
+                }
+            }
+            if (pending.isNotEmpty()) onBatch(pending.toList())
+            return count
         }
     }
 
