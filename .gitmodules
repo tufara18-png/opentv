@@ -1,0 +1,3 @@
+[submodule "telly"]
+	path = telly
+	url = https://github.com/johnpc/telly.git
