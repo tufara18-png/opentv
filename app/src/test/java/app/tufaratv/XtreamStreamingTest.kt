@@ -5,6 +5,7 @@ import app.tufaratv.data.model.SourceKind
 import app.tufaratv.data.remote.XtreamApi
 import com.google.common.truth.Truth.assertThat
 import kotlinx.coroutines.runBlocking
+import java.util.concurrent.TimeUnit
 import okhttp3.OkHttpClient
 import okhttp3.mockwebserver.MockResponse
 import okhttp3.mockwebserver.MockWebServer
@@ -27,8 +28,8 @@ class XtreamStreamingTest {
     }
 
     @Test
-    fun hugeLiveCatalogueIsDeliveredInBoundedBatches() = runBlocking {
-        val total = 12_000
+    fun fortyThousandChannelCatalogueIsDeliveredInBoundedBatches() = runBlocking {
+        val total = 40_000
         val body = buildString {
             append('[')
             repeat(total) { i ->
@@ -75,6 +76,42 @@ class XtreamStreamingTest {
         assertThat(request.requestUrl?.queryParameter("action")).isEqualTo("get_live_streams")
         assertThat(request.requestUrl?.queryParameter("username")).isEqualTo("user")
         assertThat(request.requestUrl?.queryParameter("password")).isEqualTo("pass")
+    }
+
+    @Test
+    fun slowServerRespectsClientTimeoutInsteadOfHangingForever() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setBodyDelay(5, TimeUnit.SECONDS)
+                .setBody("[]"),
+        )
+
+        val api =
+            XtreamApi(
+                OkHttpClient.Builder()
+                    .callTimeout(300, TimeUnit.MILLISECONDS)
+                    .build(),
+            )
+        val source =
+            Source(
+                id = 8,
+                name = "Slow",
+                kind = SourceKind.XTREAM,
+                url = server.url("/").toString().trimEnd('/'),
+                username = "user",
+                password = "pass",
+            )
+
+        val started = System.nanoTime()
+        val error =
+            runCatching {
+                api.streamLiveStreams(source) {}
+            }.exceptionOrNull()
+        val elapsedMs = TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started)
+
+        assertThat(error).isNotNull()
+        assertThat(elapsedMs).isLessThan(2_000)
     }
 
     @Test
