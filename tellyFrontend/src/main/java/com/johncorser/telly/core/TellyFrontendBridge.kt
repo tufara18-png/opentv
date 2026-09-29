@@ -21,7 +21,6 @@ import com.johncorser.telly.features.playback.PlaybackHooks
 import com.johncorser.telly.features.playback.PlaybackSources
 import com.johncorser.telly.features.playback.PlaybackTime
 import com.johncorser.telly.features.playback.PlayerKeymap
-import com.johncorser.telly.features.player.PlayerEngine
 import com.johncorser.telly.features.player.PlayerEngineFactory
 import com.johncorser.telly.features.recording.recordingCenter
 import com.johncorser.telly.features.reminders.GuideReminders
@@ -63,7 +62,7 @@ fun ServiceLocator.bridgedPlaybackDeps(
     channelDao: ChannelDao,
     programDao: ProgramDao,
     hooks: PlaybackHooks = PlaybackHooks(),
-    engineFactory: () -> PlayerEngine = { tunedEngine(context) },
+    resolveStream: suspend (String) -> String = { it },
 ): PlaybackDeps {
     val settings = settingsRepository(context)
     val epg =
@@ -82,7 +81,12 @@ fun ServiceLocator.bridgedPlaybackDeps(
                 myList = myListStore(context),
             ),
         keyValueStore = keyValueStore(context),
-        engineFactory = engineFactory,
+        engineFactory = {
+            OpenTvResolvingPlayerEngine(
+                delegate = tunedEngine(context),
+                resolve = resolveStream,
+            )
+        },
         time =
             PlaybackTime(
                 clock = clock,
@@ -166,7 +170,7 @@ fun ServiceLocator.bridgedMultiviewDeps(
     context: Context,
     channelDao: ChannelDao,
     playback: PlaybackDeps,
-    engineFactory: () -> PlayerEngine = { tunedEngine(context, handleAudioFocus = false) },
+    resolveStream: suspend (String) -> String = { it },
 ): MultiviewDeps {
     val settings = settingsRepository(context)
     return MultiviewDeps(
@@ -176,7 +180,13 @@ fun ServiceLocator.bridgedMultiviewDeps(
         time = playback.time,
         tune =
             MultiviewTune(
-                engines = PlayerEngineFactory { engineFactory() },
+                engines =
+                    PlayerEngineFactory {
+                        OpenTvResolvingPlayerEngine(
+                            delegate = tunedEngine(context, handleAudioFocus = false),
+                            resolve = resolveStream,
+                        )
+                    },
                 resolveUrl = proxyResolve(settings),
             ),
     )
@@ -186,12 +196,17 @@ fun ServiceLocator.bridgedVodDeps(
     context: Context,
     items: VodItemDao,
     positions: VodPositionDao,
-    engineFactory: () -> PlayerEngine = { tunedEngine(context) },
+    resolveStream: suspend (String) -> String = { it },
 ): VodDeps =
     VodDeps(
         items = items,
         positions = positions,
-        engineFactory = engineFactory,
+        engineFactory = {
+            OpenTvResolvingPlayerEngine(
+                delegate = tunedEngine(context),
+                resolve = resolveStream,
+            )
+        },
         rememberPosition = { true },
         clock = clock,
     )
