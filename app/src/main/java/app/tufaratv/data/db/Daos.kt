@@ -204,6 +204,42 @@ interface ChannelDao {
     @Query("SELECT COUNT(*) FROM channels WHERE sourceId = :sourceId")
     suspend fun countForSource(sourceId: Long): Int
 
+    @Query("SELECT COUNT(*) FROM channels WHERE hidden = 0")
+    suspend fun totalVisibleCount(): Int
+
+    @Query(
+        """
+        SELECT * FROM channels
+        WHERE hidden = 0 AND sourceId = :sourceId
+        ORDER BY sortIndex, displayName
+        """
+    )
+    fun observeForSource(sourceId: Long): Flow<List<Channel>>
+
+    @Query(
+        """
+        SELECT * FROM channels
+        WHERE hidden = 0
+          AND sourceId = :sourceId
+          AND categoryId IN (:categoryIds)
+        ORDER BY sortIndex, displayName
+        """
+    )
+    fun observeInCategoriesForSource(sourceId: Long, categoryIds: List<String>): Flow<List<Channel>>
+
+    @Query("SELECT * FROM channels WHERE id = :id")
+    fun observeById(id: Long): Flow<Channel?>
+
+    @Query(
+        """
+        SELECT sourceId, categoryId, COUNT(*) AS count
+        FROM channels
+        WHERE hidden = 0 AND sourceId = :sourceId AND categoryId IS NOT NULL
+        GROUP BY sourceId, categoryId
+        """
+    )
+    fun observeChannelCountsByCategory(sourceId: Long): Flow<List<CategoryChannelCount>>
+
     /**
      * Reactive count of channels the guide can actually show (hidden rows excluded). Lets the home
      * screen tell "the guide is still building from channels on disk" apart from "nothing loaded",
