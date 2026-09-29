@@ -286,8 +286,8 @@ private fun TufaraTvApp(isTelevision: Boolean) {
     val bootContext = androidx.compose.ui.platform.LocalContext.current
     val bootSettings = remember { ServiceLocator.get(bootContext).settings }
 
-    if (isTelevision && sourcesUi.sources.isNotEmpty() && bootSettings.libraryPrepared) {
-        OpenTvTellyHost()
+    if (isTelevision) {
+        OpenTvTellyHost(hasSources = sourcesUi.sources.isNotEmpty())
         return
     }
 
