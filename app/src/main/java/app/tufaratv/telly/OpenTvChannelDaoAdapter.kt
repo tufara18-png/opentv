@@ -103,38 +103,41 @@ class OpenTvChannelDaoAdapter(
         }
     }
 
-    private fun OpenTvChannel.toTelly(categoryNames: Map<String, String> = emptyMap()): ChannelEntity {
-        val group = categoryId?.let { categoryNames[categoryKey(sourceId, it)] ?: it }
-        val effectiveTvgId = matchedEpgId ?: epgChannelId
-        return ChannelEntity(
-            id = id,
-            playlistId = sourceId,
-            number = number ?: (sortIndex + 1),
-            sortIndex = sortIndex,
-            source = ChannelSource(
-                name = shownName,
-                groupTitle = group,
-                logoUrl = logoUrl,
-                streamUrl = streamUrl,
-                tvgId = effectiveTvgId,
-            ),
-            flags = ChannelFlags(
-                favorite = favourite,
-                hidden = hidden,
-            ),
-            catchup = ChannelCatchup(
-                catchupType = if (tvArchive) "xtream-codes" else null,
-                catchupDays = tvArchiveDays.takeIf { it > 0 },
-            ),
-            overrides = ChannelOverrides(
-                customName = customName,
-                epgOverride = epgOverrideId,
-            ),
-        )
-    }
+    private fun OpenTvChannel.toTelly(categoryNames: Map<String, String> = emptyMap()): ChannelEntity =
+        toTellyChannel(categoryId?.let { categoryNames[categoryKey(sourceId, it)] ?: it })
 
     private fun readOnly(): Nothing =
         error("OpenTV owns channel writes; Telly is connected as a frontend")
 
     private fun categoryKey(sourceId: Long, categoryId: String): String = "$sourceId:$categoryId"
+}
+
+
+internal fun OpenTvChannel.toTellyChannel(groupTitle: String? = categoryId): ChannelEntity {
+    val effectiveTvgId = epgOverrideId ?: matchedEpgId ?: epgChannelId
+    return ChannelEntity(
+        id = id,
+        playlistId = sourceId,
+        number = number ?: (sortIndex + 1),
+        sortIndex = sortIndex,
+        source = ChannelSource(
+            name = shownName,
+            groupTitle = groupTitle,
+            logoUrl = logoUrl,
+            streamUrl = streamUrl,
+            tvgId = effectiveTvgId,
+        ),
+        flags = ChannelFlags(
+            favorite = favourite,
+            hidden = hidden,
+        ),
+        catchup = ChannelCatchup(
+            catchupType = if (tvArchive) "xtream-codes" else null,
+            catchupDays = tvArchiveDays.takeIf { it > 0 },
+        ),
+        overrides = ChannelOverrides(
+            customName = customName,
+            epgOverride = epgOverrideId,
+        ),
+    )
 }
