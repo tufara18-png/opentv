@@ -25,10 +25,12 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 
 /**
@@ -44,10 +46,13 @@ class OpenTvChannelDaoAdapter(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val mappedVisible: Flow<List<ChannelEntity>> =
-        channels.observe(null, null)
-            .combine(categories.observe(StreamKind.LIVE)) { rows, groups ->
+        channels.observeVisibleCount()
+            .debounce { count -> if (count == 0) 0L else 750L }
+            .mapLatest {
+                val rows = channels.visibleSnapshot()
+                val groups = categories.allByKind(StreamKind.LIVE)
                 val names = groups.associate { categoryKey(it.sourceId, it.id) to it.name }
-                rows.map { it.toTelly(names) }
+                rows.map { row -> row.toTelly(names) }
             }
             .flowOn(Dispatchers.Default)
             .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
