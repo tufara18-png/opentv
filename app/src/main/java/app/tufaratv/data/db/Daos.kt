@@ -188,6 +188,9 @@ interface ChannelDao {
     @Query("SELECT * FROM channels WHERE id = :id")
     suspend fun byId(id: Long): Channel?
 
+    @Query("SELECT * FROM channels WHERE streamUrl = :url LIMIT 1")
+    suspend fun byStreamUrl(url: String): Channel?
+
     /** Every quality variant of one logical channel, best first. */
     @Query(
         """
