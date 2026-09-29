@@ -25,13 +25,13 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
+import kotlinx.coroutines.flow.transformLatest
 
 /**
  * Makes OpenTV's live catalogue look like Telly's [ChannelDao].
@@ -47,7 +47,18 @@ class OpenTvChannelDaoAdapter(
 
     private val mappedVisible: Flow<List<ChannelEntity>> =
         channels.observeVisibleCount()
-            .debounce { count -> if (count == 0) 0L else 750L }
+            .let { counts ->
+                var emittedFirstPositive = false
+                counts.transformLatest { count ->
+                    if (count > 0 && !emittedFirstPositive) {
+                        emittedFirstPositive = true
+                        emit(count)
+                    } else {
+                        if (count > 0) kotlinx.coroutines.delay(750)
+                        emit(count)
+                    }
+                }
+            }
             .mapLatest {
                 val rows = channels.visibleSnapshot()
                 val groups = categories.allByKind(StreamKind.LIVE)
