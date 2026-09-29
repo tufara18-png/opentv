@@ -176,8 +176,8 @@ interface ChannelDao {
         SELECT * FROM channels
         WHERE hidden = 0
           AND (
-            (' ' || COALESCE(NULLIF(customName, ''), displayName)) LIKE :nameLike ESCAPE '\\'
-            OR CAST(COALESCE(number, 0) AS TEXT) LIKE :numberLike ESCAPE '\\'
+            (' ' || COALESCE(NULLIF(customName, ''), displayName)) LIKE :nameLike ESCAPE '\'
+            OR CAST(COALESCE(number, 0) AS TEXT) LIKE :numberLike ESCAPE '\'
           )
         ORDER BY COALESCE(NULLIF(customName, ''), displayName) COLLATE NOCASE, sortIndex
         LIMIT :limit
@@ -451,7 +451,7 @@ interface ProgrammeDao {
         """
         SELECT * FROM programmes
         WHERE endUtcMillis > :atUtcMillis
-          AND (' ' || title) LIKE :titleLike ESCAPE '\\'
+          AND (' ' || title) LIKE :titleLike ESCAPE '\'
         ORDER BY startUtcMillis, epgChannelId
         LIMIT :limit
         """
