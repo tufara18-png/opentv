@@ -97,6 +97,7 @@ class OpenTvVodPositionDaoAdapter(
 
     override suspend fun clearAll() {
         positions.forProfile(settings.activeProfileId.value)
+            .filter { it.mediaKey.startsWith(POSITION_PREFIX) }
             .forEach { positions.delete(it.profileId, it.mediaKey) }
     }
 
@@ -110,12 +111,14 @@ class OpenTvVodPositionDaoAdapter(
 }
 
 @OptIn(ExperimentalCoroutinesApi::class)
+private const val POSITION_PREFIX = "movie:"
+
 private fun kotlinx.coroutines.flow.StateFlow<Long>.flatMapRecent(
     positions: OpenTvPlaybackPositionDao,
 ): Flow<List<VodPositionEntity>> =
     flatMapLatest { profileId ->
         positions.observeRecent(profileId, 200).map { rows ->
-            rows.map {
+            rows.filter { it.mediaKey.startsWith(POSITION_PREFIX) }.map {
                 VodPositionEntity(
                     itemKey = it.mediaKey,
                     positionMs = it.positionMillis,
