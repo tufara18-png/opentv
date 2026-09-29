@@ -13,6 +13,7 @@ val syncTellySources by tasks.registering(Sync::class) {
         exclude("com/johncorser/telly/features/playback/TuneController.kt")
         exclude("com/johncorser/telly/features/vod/VodPlaybackViewModel.kt")
         exclude("com/johncorser/telly/features/multiview/MultiviewPanes.kt")
+        exclude("com/johncorser/telly/features/onboarding/WizardScreen.kt")
     }
     into(filteredTellySources)
 }
