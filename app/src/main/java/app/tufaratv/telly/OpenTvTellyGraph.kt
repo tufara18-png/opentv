@@ -16,6 +16,8 @@ import com.johncorser.telly.core.guideDeps
 import com.johncorser.telly.core.playlistFetchUserAgentFor
 import com.johncorser.telly.features.guide.GuideDeps
 import com.johncorser.telly.features.multiview.MultiviewDeps
+import com.johncorser.telly.features.onboarding.OpenTvProviderBridge
+import com.johncorser.telly.features.onboarding.OpenTvProviderKind
 import com.johncorser.telly.features.playback.PlaybackDeps
 import com.johncorser.telly.features.playlist.M3uFetcher
 import com.johncorser.telly.features.recording.RecordingDeps
@@ -34,6 +36,45 @@ import com.johncorser.telly.features.vod.VodDeps
 class OpenTvTellyGraph(context: Context) {
     private val appContext = context.applicationContext
     private val openTv = OpenTvServiceLocator.get(appContext)
+
+    init {
+        OpenTvProviderBridge.install { draft ->
+            runCatching {
+                val kind =
+                    when (draft.kind) {
+                        OpenTvProviderKind.XTREAM -> SourceKind.XTREAM
+                        OpenTvProviderKind.STALKER -> SourceKind.STALKER
+                    }
+                val source =
+                    Source(
+                        name =
+                            draft.name.ifBlank {
+                                if (kind == SourceKind.XTREAM) "Xtream Codes" else "Stalker Portal"
+                            },
+                        kind = kind,
+                        url = draft.url,
+                        username = draft.username.takeIf { it.isNotBlank() },
+                        password = draft.password.takeIf { it.isNotBlank() },
+                        macAddress = draft.macAddress.takeIf { it.isNotBlank() },
+                    )
+
+                openTv.sourceRepository.test(source).getOrThrow()
+                val id = openTv.sourceRepository.save(source)
+                val saved = openTv.sourceRepository.byId(id)
+                    ?: error("Provider was not saved")
+                val sync = openTv.catalogRepository.sync(saved, System.currentTimeMillis())
+                check(sync is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success) {
+                    "Provider connected, but loading the catalogue failed"
+                }
+                runCatching {
+                    openTv.epgRepository.syncAll(
+                        nowUtcMillis = System.currentTimeMillis(),
+                        force = true,
+                    )
+                }
+            }
+        }
+    }
 
     val channels =
         OpenTvChannelDaoAdapter(
