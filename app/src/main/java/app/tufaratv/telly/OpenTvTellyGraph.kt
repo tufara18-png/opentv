@@ -40,6 +40,10 @@ class OpenTvTellyGraph(context: Context) {
 
     init {
         OpenTvProviderBridge.install { draft ->
+            Log.i(
+                TAG,
+                "Provider submit kind=${draft.kind} host=${hostOf(draft.url)}",
+            )
             runCatching {
                 val kind =
                     when (draft.kind) {
@@ -80,6 +84,12 @@ class OpenTvTellyGraph(context: Context) {
                     )
                 }
                 Unit
+            }.onFailure {
+                Log.e(
+                    TAG,
+                    "Provider submit failed kind=${draft.kind} host=${hostOf(draft.url)}: ${it.message}",
+                    it,
+                )
             }
         }
     }
@@ -152,7 +162,17 @@ class OpenTvTellyGraph(context: Context) {
             userAgentFor = TellyServiceLocator.playlistFetchUserAgentFor(appContext),
         )
 
-    suspend fun fetchPlaylist(url: String): String = playlistFetcher.fetch(url)
+    suspend fun fetchPlaylist(url: String): String {
+        Log.i(TAG, "M3U fetch start host=${hostOf(url)}")
+        return runCatching { playlistFetcher.fetch(url) }
+            .onSuccess { body ->
+                Log.i(TAG, "M3U fetch success host=${hostOf(url)} bytes=${body.length}")
+            }
+            .onFailure {
+                Log.e(TAG, "M3U fetch failed host=${hostOf(url)}: ${it.message}", it)
+            }
+            .getOrThrow()
+    }
 
     suspend fun hasSources(): Boolean = openTv.sourceRepository.enabled().isNotEmpty()
 
