@@ -30,6 +30,7 @@ import com.johncorser.telly.features.vod.VodDeps
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
 import okhttp3.Request
@@ -126,6 +127,23 @@ class OpenTvTellyGraph(context: Context) {
                         }
                     }
                 }
+
+                val firstChannelsReady =
+                    withTimeoutOrNull(FIRST_CHANNEL_TIMEOUT_MS) {
+                        while (openTv.database.channels().countForSource(saved.id) == 0) {
+                            delay(100)
+                        }
+                        true
+                    } ?: false
+
+                if (!firstChannelsReady) {
+                    error("La connexion fonctionne, mais aucune chaîne n’a encore été reçue.")
+                }
+
+                Log.i(
+                    TAG,
+                    "Provider first channels ready sourceId=${saved.id}; leaving onboarding",
+                )
                 Unit
             }.onFailure {
                 Log.e(
@@ -384,6 +402,7 @@ class OpenTvTellyGraph(context: Context) {
         const val TAG = "OpenTvTellyGraph"
         const val PROVIDER_TEST_TIMEOUT_MS = 20_000L
         const val LIVE_SYNC_TIMEOUT_MS = 120_000L
+        const val FIRST_CHANNEL_TIMEOUT_MS = 30_000L
     }
 
     val settings: SettingsGraph =
