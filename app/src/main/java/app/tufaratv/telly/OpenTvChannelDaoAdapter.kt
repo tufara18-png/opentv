@@ -20,6 +20,7 @@ import com.johncorser.telly.features.playlist.db.ChannelOverrides
 import com.johncorser.telly.features.playlist.db.ChannelSource
 import com.johncorser.telly.features.playlist.db.TvgOffset
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
@@ -47,18 +48,7 @@ class OpenTvChannelDaoAdapter(
 
     private val mappedVisible: Flow<List<ChannelEntity>> =
         channels.observeVisibleCount()
-            .let { counts ->
-                var emittedFirstPositive = false
-                counts.transformLatest { count ->
-                    if (count > 0 && !emittedFirstPositive) {
-                        emittedFirstPositive = true
-                        emit(count)
-                    } else {
-                        if (count > 0) kotlinx.coroutines.delay(5_000)
-                        emit(count)
-                    }
-                }
-            }
+            .coalescedCatalogueCounts()
             .mapLatest {
                 val rows = channels.visibleSnapshot()
                 val groups = categories.allByKind(StreamKind.LIVE)
@@ -199,4 +189,19 @@ internal fun OpenTvChannel.toTellyChannel(groupTitle: String? = categoryId): Cha
             epgOverride = epgOverrideId,
         ),
     )
+}
+
+
+@OptIn(ExperimentalCoroutinesApi::class)
+internal fun Flow<Int>.coalescedCatalogueCounts(delayMillis: Long = 5_000L): Flow<Int> {
+    var emittedFirstPositive = false
+    return transformLatest { count ->
+        if (count > 0 && !emittedFirstPositive) {
+            emittedFirstPositive = true
+            emit(count)
+        } else {
+            if (count > 0) kotlinx.coroutines.delay(delayMillis)
+            emit(count)
+        }
+    }
 }
