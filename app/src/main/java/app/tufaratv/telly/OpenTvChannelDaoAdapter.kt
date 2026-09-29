@@ -19,11 +19,17 @@ import com.johncorser.telly.features.playlist.db.ChannelGroupCount
 import com.johncorser.telly.features.playlist.db.ChannelOverrides
 import com.johncorser.telly.features.playlist.db.ChannelSource
 import com.johncorser.telly.features.playlist.db.TvgOffset
+import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.stateIn
 
 /**
  * Makes OpenTV's live catalogue look like Telly's [ChannelDao].
@@ -35,6 +41,8 @@ class OpenTvChannelDaoAdapter(
     private val channels: OpenTvChannelDao,
     private val categories: OpenTvCategoryDao,
 ) : ChannelDao {
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
+
     private val mappedVisible: Flow<List<ChannelEntity>> =
         channels.observe(null, null)
             .combine(categories.observe(StreamKind.LIVE)) { rows, groups ->
@@ -42,20 +50,51 @@ class OpenTvChannelDaoAdapter(
                 rows.map { it.toTelly(names) }
             }
             .flowOn(Dispatchers.Default)
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     override fun observeForPlaylist(playlistId: Long): Flow<List<ChannelEntity>> =
-        mappedVisible.map { rows -> rows.filter { it.playlistId == playlistId } }
+        channels.observeForSource(playlistId)
+            .combine(categories.observe(StreamKind.LIVE)) { rows, groups ->
+                val names = groups
+                    .asSequence()
+                    .filter { it.sourceId == playlistId }
+                    .associate { categoryKey(it.sourceId, it.id) to it.name }
+                rows.map { it.toTelly(names) }
+            }
+            .flowOn(Dispatchers.Default)
 
     override fun observeByGroup(playlistId: Long, groupTitle: String): Flow<List<ChannelEntity>> =
-        mappedVisible.map { rows ->
-            rows.filter { it.playlistId == playlistId && it.source.groupTitle == groupTitle }
-        }
+        categories.observe(StreamKind.LIVE)
+            .map { groups ->
+                groups
+                    .asSequence()
+                    .filter { it.sourceId == playlistId && it.name == groupTitle }
+                    .map { it.id }
+                    .toList()
+            }
+            .flatMapLatest { ids ->
+                if (ids.isEmpty()) {
+                    flowOf(emptyList())
+                } else {
+                    channels.observeInCategoriesForSource(playlistId, ids)
+                        .map { rows -> rows.map { it.toTellyChannel(groupTitle) } }
+                }
+            }
+            .flowOn(Dispatchers.Default)
 
     override fun observeGroups(playlistId: Long): Flow<List<ChannelGroupCount>> =
-        observeForPlaylist(playlistId).map { rows ->
-            rows.groupBy { it.source.groupTitle }
-                .map { (group, members) -> ChannelGroupCount(group, members.size) }
-        }
+        channels.observeChannelCountsByCategory(playlistId)
+            .combine(categories.observe(StreamKind.LIVE)) { counts, groups ->
+                val names = groups
+                    .asSequence()
+                    .filter { it.sourceId == playlistId }
+                    .associateBy({ it.id }, { it.name })
+                counts.mapNotNull { row ->
+                    val title = row.categoryId?.let(names::get) ?: return@mapNotNull null
+                    ChannelGroupCount(title, row.count)
+                }
+            }
+            .flowOn(Dispatchers.Default)
 
     override fun observeVisible(): Flow<List<ChannelEntity>> = mappedVisible
 
@@ -66,7 +105,7 @@ class OpenTvChannelDaoAdapter(
      */
     override fun observeAll(): Flow<List<ChannelEntity>> = mappedVisible
 
-    override suspend fun totalCount(): Int = channels.allForMatching().size
+    override suspend fun totalCount(): Int = channels.totalVisibleCount()
 
     override suspend fun forPlaylist(playlistId: Long): List<ChannelEntity> {
         val names = categories.allByKind(StreamKind.LIVE)
@@ -83,10 +122,10 @@ class OpenTvChannelDaoAdapter(
     override suspend fun byId(id: Long): ChannelEntity? = channels.byId(id)?.toTelly()
 
     override fun observeById(id: Long): Flow<ChannelEntity?> =
-        mappedVisible.map { rows -> rows.firstOrNull { it.id == id } }
+        channels.observeById(id).map { it?.toTelly() }
 
     override fun observeEpgOffsets(): Flow<List<TvgOffset>> =
-        mappedVisible.map { emptyList() }
+        flowOf(emptyList())
 
     override suspend fun update(channel: ChannelEntity) {
         val current = channels.byId(channel.id) ?: return
