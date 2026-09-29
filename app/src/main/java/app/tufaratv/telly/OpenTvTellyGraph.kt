@@ -1,6 +1,7 @@
 package app.tufaratv.telly
 
 import android.content.Context
+import android.util.Log
 import app.tufaratv.core.ServiceLocator as OpenTvServiceLocator
 import app.tufaratv.data.model.Source
 import app.tufaratv.data.model.SourceKind
@@ -63,9 +64,14 @@ class OpenTvTellyGraph(context: Context) {
                 val saved = openTv.sourceRepository.byId(id)
                     ?: error("Provider was not saved")
                 val sync = openTv.catalogRepository.sync(saved, System.currentTimeMillis())
-                if (sync !is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success) {
+                if (sync is app.tufaratv.data.repo.CatalogRepository.SyncResult.Failed) {
+                    Log.e(
+                        TAG,
+                        "Provider catalogue sync failed kind=${saved.kind} host=${hostOf(saved.url)} reason=${sync.reason}",
+                        sync.cause,
+                    )
                     openTv.database.sources().delete(id)
-                    error("Provider connected, but loading the catalogue failed")
+                    error(sync.reason)
                 }
                 runCatching {
                     openTv.epgRepository.syncAll(
@@ -105,10 +111,18 @@ class OpenTvTellyGraph(context: Context) {
                     )
                 val source = openTv.sourceRepository.byId(id)
                     ?: error("OpenTV source was not created")
-                check(
-                    openTv.catalogRepository.sync(source, System.currentTimeMillis()) is
-                        app.tufaratv.data.repo.CatalogRepository.SyncResult.Success,
-                ) { "OpenTV playlist sync failed" }
+                when (val sync = openTv.catalogRepository.sync(source, System.currentTimeMillis())) {
+                    is app.tufaratv.data.repo.CatalogRepository.SyncResult.Success -> Unit
+                    is app.tufaratv.data.repo.CatalogRepository.SyncResult.Failed -> {
+                        Log.e(
+                            TAG,
+                            "M3U catalogue sync failed host=${hostOf(source.url)} reason=${sync.reason}",
+                            sync.cause,
+                        )
+                        openTv.database.sources().delete(id)
+                        error(sync.reason)
+                    }
+                }
                 if (!playlist.epgUrl.isNullOrBlank()) {
                     openTv.epgRepository.syncAll(
                         nowUtcMillis = System.currentTimeMillis(),
@@ -253,6 +267,14 @@ class OpenTvTellyGraph(context: Context) {
         }
 
         return url
+    }
+
+    private fun hostOf(url: String): String =
+        runCatching { java.net.URI(url).host ?: url.substringBefore('?') }
+            .getOrDefault(url.substringBefore('?'))
+
+    private companion object {
+        const val TAG = "OpenTvTellyGraph"
     }
 
     val settings: SettingsGraph =
