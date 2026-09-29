@@ -2,6 +2,8 @@ package app.tufaratv.telly
 
 import android.content.Context
 import app.tufaratv.core.ServiceLocator as OpenTvServiceLocator
+import app.tufaratv.data.model.Source
+import app.tufaratv.data.model.SourceKind
 import app.tufaratv.data.repo.SourceVariant
 import com.johncorser.telly.core.ServiceLocator as TellyServiceLocator
 import com.johncorser.telly.core.bridgedMultiviewDeps
@@ -11,10 +13,12 @@ import com.johncorser.telly.core.bridgedSearchDeps
 import com.johncorser.telly.core.bridgedSettingsGraph
 import com.johncorser.telly.core.bridgedVodDeps
 import com.johncorser.telly.core.guideDeps
+import com.johncorser.telly.core.playlistFetchUserAgentFor
 import com.johncorser.telly.core.tunedEngine
 import com.johncorser.telly.features.guide.GuideDeps
 import com.johncorser.telly.features.multiview.MultiviewDeps
 import com.johncorser.telly.features.playback.PlaybackDeps
+import com.johncorser.telly.features.playlist.M3uFetcher
 import com.johncorser.telly.features.recording.RecordingDeps
 import com.johncorser.telly.features.recording.recordingDeps
 import com.johncorser.telly.features.reminders.RemindersHub
@@ -47,7 +51,52 @@ class OpenTvTellyGraph(context: Context) {
         OpenTvPlaylistRepository(
             sources = openTv.database.sources(),
             channels = openTv.database.channels(),
+            addSource = { sourceUrl, playlist, name ->
+                val id =
+                    openTv.sourceRepository.save(
+                        Source(
+                            name = name?.trim()?.takeIf { it.isNotEmpty() } ?: "Playlist",
+                            kind = SourceKind.M3U,
+                            url = sourceUrl,
+                            epgUrl = playlist.epgUrl,
+                        ),
+                    )
+                val source = openTv.sourceRepository.byId(id)
+                    ?: error("OpenTV source was not created")
+                check(
+                    openTv.catalogRepository.sync(source, System.currentTimeMillis()) is
+                        app.tufaratv.data.repo.CatalogRepository.SyncResult.Success,
+                ) { "OpenTV playlist sync failed" }
+                if (!playlist.epgUrl.isNullOrBlank()) {
+                    openTv.epgRepository.syncAll(
+                        nowUtcMillis = System.currentTimeMillis(),
+                        force = true,
+                    )
+                }
+            },
+            changeSourceUrl = { sourceId, newUrl ->
+                val source = openTv.sourceRepository.byId(sourceId)
+                if (source == null) {
+                    false
+                } else {
+                    openTv.sourceRepository.save(source.copy(url = newUrl))
+                    val updated = openTv.sourceRepository.byId(sourceId)
+                    updated != null &&
+                        openTv.catalogRepository.sync(updated, System.currentTimeMillis()) is
+                        app.tufaratv.data.repo.CatalogRepository.SyncResult.Success
+                }
+            },
+            deleteSource = { sourceId ->
+                openTv.database.sources().delete(sourceId)
+            },
         )
+
+    private val playlistFetcher =
+        M3uFetcher(
+            userAgentFor = TellyServiceLocator.playlistFetchUserAgentFor(appContext),
+        )
+
+    suspend fun fetchPlaylist(url: String): String = playlistFetcher.fetch(url)
 
     val searchDao =
         OpenTvSearchDaoAdapter(
