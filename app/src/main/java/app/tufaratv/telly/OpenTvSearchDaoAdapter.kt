@@ -10,7 +10,6 @@ import com.johncorser.telly.features.epg.db.ProgramEntity
 import com.johncorser.telly.features.playlist.db.ChannelEntity
 import com.johncorser.telly.features.search.db.SearchDao
 import java.util.Locale
-import kotlinx.coroutines.flow.first
 
 /**
  * Search bridge that keeps Telly's search UI while querying OpenTV's catalogue.
@@ -26,21 +25,12 @@ class OpenTvSearchDaoAdapter(
         val groups = categories.allByKind(StreamKind.LIVE)
             .associate { "${it.sourceId}:${it.id}" to it.name }
 
-        return channels.allForMatching()
-            .asSequence()
-            .filterNot { it.hidden }
-            .filter { row ->
-                val wordMatch = query.isNotBlank() && hasWordPrefix(row.shownName, query)
-                val numberMatch = numberPrefix != null && row.number?.toString()?.startsWith(numberPrefix) == true
-                wordMatch || numberMatch
-            }
-            .sortedWith(compareBy(String.CASE_INSENSITIVE_ORDER) { it.shownName })
+        return channels.searchForTelly(nameLike, numberLike)
             .map { row ->
                 row.toTellyChannel(
                     row.categoryId?.let { groups["${row.sourceId}:$it"] ?: it },
                 )
             }
-            .toList()
     }
 
     override suspend fun programs(
@@ -48,15 +38,9 @@ class OpenTvSearchDaoAdapter(
         atMs: Long,
         limit: Int,
     ): List<ProgramEntity> {
-        val query = decodeLike(titleLike)
-        if (query.isBlank()) return emptyList()
+        if (decodeLike(titleLike).isBlank()) return emptyList()
         return programmes
-            .observeWindow(atMs, Long.MAX_VALUE)
-            .first()
-            .asSequence()
-            .filter { it.endUtcMillis > atMs && hasWordPrefix(it.title, query) }
-            .sortedWith(compareBy({ it.startUtcMillis }, { it.epgChannelId }))
-            .take(limit)
+            .searchFutureForTelly(titleLike, atMs, limit)
             .map {
                 ProgramEntity(
                     id = it.id,
