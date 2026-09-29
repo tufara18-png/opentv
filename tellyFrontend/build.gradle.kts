@@ -6,6 +6,15 @@ plugins {
     alias(libs.plugins.ksp)
 }
 
+val filteredTellySources = layout.buildDirectory.dir("generated/tellySources")
+
+val syncTellySources by tasks.registering(Sync::class) {
+    from(rootProject.file("telly/app/src/main/java")) {
+        exclude("com/johncorser/telly/features/playback/TuneController.kt")
+    }
+    into(filteredTellySources)
+}
+
 android {
     namespace = "com.johncorser.telly"
     compileSdk = 36
@@ -17,8 +26,7 @@ android {
 
     sourceSets {
         getByName("main") {
-            java.srcDir("../telly/app/src/main/java")
-            java.exclude("com/johncorser/telly/features/playback/TuneController.kt")
+            java.srcDir(filteredTellySources)
             res.srcDir("../telly/app/src/main/res")
         }
     }
@@ -36,6 +44,14 @@ android {
         compose = true
         buildConfig = true
     }
+}
+
+tasks.matching {
+    it.name.startsWith("ksp") ||
+        it.name.startsWith("compile") ||
+        it.name.contains("Sources", ignoreCase = true)
+}.configureEach {
+    dependsOn(syncTellySources)
 }
 
 ksp {
