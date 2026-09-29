@@ -248,6 +248,15 @@ interface ChannelDao {
     @Query("SELECT COUNT(*) FROM channels WHERE hidden = 0")
     fun observeVisibleCount(): Flow<Int>
 
+    @Query(
+        """
+        SELECT * FROM channels
+        WHERE hidden = 0
+        ORDER BY sortIndex, displayName
+        """
+    )
+    suspend fun visibleSnapshot(): List<Channel>
+
     @Query("UPDATE channels SET favourite = :favourite WHERE id = :id")
     suspend fun setFavourite(id: Long, favourite: Boolean)
 
