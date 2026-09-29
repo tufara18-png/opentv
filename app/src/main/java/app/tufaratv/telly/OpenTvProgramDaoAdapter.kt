@@ -33,7 +33,7 @@ class OpenTvProgramDaoAdapter(
         tvgIds: List<String>,
         atMs: Long,
     ): Flow<List<ProgramEntity>> =
-        programmes.observeWindowForChannels(tvgIds, atMs, Long.MAX_VALUE)
+        programmes.observeWindowForChannels(tvgIds, atMs, atMs + NOW_NEXT_WINDOW_MS)
             .map { rows -> rows.map { it.toTelly() } }
 
     override suspend fun upsertAll(programs: List<ProgramEntity>) = readOnly()
@@ -75,4 +75,8 @@ class OpenTvProgramDaoAdapter(
 
     private fun readOnly(): Nothing =
         error("OpenTV owns EPG writes; Telly is connected as a read-only frontend")
+
+    private companion object {
+        const val NOW_NEXT_WINDOW_MS = 24L * 60L * 60L * 1000L
+    }
 }
