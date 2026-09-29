@@ -16,6 +16,8 @@ import app.tufaratv.data.parser.VodTitleCleaner
 import java.io.InputStream
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.ExperimentalSerializationApi
+import kotlinx.serialization.json.DecodeSequenceMode
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -101,25 +103,77 @@ class XtreamApi(
 
     suspend fun liveStreams(source: Source): List<Channel> = withContext(Dispatchers.IO) {
         getJson(source, "get_live_streams").arrayOrEmpty.mapIndexedNotNull { index, element ->
-            val obj = element.jsonObjectOrNull ?: return@mapIndexedNotNull null
-            val streamId = obj["stream_id"].asStringOrNull ?: return@mapIndexedNotNull null
-            val name = obj["name"].asStringOrNull ?: return@mapIndexedNotNull null
-            Channel(
-                sourceId = source.id,
-                streamId = streamId,
-                name = name,
-                categoryId = obj["category_id"].asStringOrNull,
-                logoUrl = obj["stream_icon"].asStringOrNull?.takeIf { it.isNotBlank() },
-                // epg_channel_id is what joins to XMLTV; it is frequently blank, in which
-                // case the channel simply has no guide rather than the guide being broken.
-                epgChannelId = obj["epg_channel_id"].asStringOrNull?.takeIf { it.isNotBlank() },
-                tvArchive = obj["tv_archive"].asIntOrNull == 1,
-                tvArchiveDays = obj["tv_archive_duration"].asIntOrNull ?: 0,
-                number = obj["num"].asIntOrNull,
-                streamUrl = liveStreamUrl(source, streamId),
-                sortIndex = obj["num"].asIntOrNull ?: index,
-            )
+            liveChannel(source, element.jsonObjectOrNull, index)
         }
+    }
+
+    /**
+     * Streams a potentially huge Xtream live catalogue directly from the HTTP body.
+     *
+     * Some providers return tens of thousands of channels in one JSON array. Building the entire
+     * response String, JsonArray and Channel list at once can exceed the ~128 MB heap of common
+     * Android TV devices. This decoder keeps only one JSON element plus one small batch alive.
+     */
+    @OptIn(ExperimentalSerializationApi::class)
+    suspend fun streamLiveStreams(
+        source: Source,
+        batchSize: Int = 250,
+        onBatch: suspend (List<Channel>) -> Unit,
+    ): Int = withContext(Dispatchers.IO) {
+        val builder = baseUrl(source).newBuilder()
+            .encodedPath("/player_api.php")
+            .addQueryParameter("username", source.username.orEmpty())
+            .addQueryParameter("password", source.password.orEmpty())
+            .addQueryParameter("action", "get_live_streams")
+
+        http.newCall(request(source, builder.build())).execute().use { response ->
+            if (!response.isSuccessful) {
+                throw XtreamException(describeHttpFailure(response.code))
+            }
+            val body = response.body
+                ?: throw XtreamException("Le serveur a renvoyé une réponse vide.")
+
+            val pending = ArrayList<Channel>(batchSize)
+            var index = 0
+            var count = 0
+            val sequence =
+                json.decodeToSequence<JsonElement>(
+                    body.byteStream(),
+                    DecodeSequenceMode.ARRAY_WRAPPED,
+                )
+            for (element in sequence) {
+                liveChannel(source, element.jsonObjectOrNull, index)?.let { channel ->
+                    pending += channel
+                    count++
+                    if (pending.size >= batchSize) {
+                        onBatch(pending.toList())
+                        pending.clear()
+                    }
+                }
+                index++
+            }
+            if (pending.isNotEmpty()) onBatch(pending.toList())
+            count
+        }
+    }
+
+    private fun liveChannel(source: Source, obj: JsonObject?, index: Int): Channel? {
+        obj ?: return null
+        val streamId = obj["stream_id"].asStringOrNull ?: return null
+        val name = obj["name"].asStringOrNull ?: return null
+        return Channel(
+            sourceId = source.id,
+            streamId = streamId,
+            name = name,
+            categoryId = obj["category_id"].asStringOrNull,
+            logoUrl = obj["stream_icon"].asStringOrNull?.takeIf { it.isNotBlank() },
+            epgChannelId = obj["epg_channel_id"].asStringOrNull?.takeIf { it.isNotBlank() },
+            tvArchive = obj["tv_archive"].asIntOrNull == 1,
+            tvArchiveDays = obj["tv_archive_duration"].asIntOrNull ?: 0,
+            number = obj["num"].asIntOrNull,
+            streamUrl = liveStreamUrl(source, streamId),
+            sortIndex = obj["num"].asIntOrNull ?: index,
+        )
     }
 
     suspend fun movies(source: Source): List<Movie> = withContext(Dispatchers.IO) {
