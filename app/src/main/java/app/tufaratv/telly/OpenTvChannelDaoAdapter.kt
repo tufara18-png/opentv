@@ -19,8 +19,10 @@ import com.johncorser.telly.features.playlist.db.ChannelGroupCount
 import com.johncorser.telly.features.playlist.db.ChannelOverrides
 import com.johncorser.telly.features.playlist.db.ChannelSource
 import com.johncorser.telly.features.playlist.db.TvgOffset
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
 /**
@@ -34,10 +36,12 @@ class OpenTvChannelDaoAdapter(
     private val categories: OpenTvCategoryDao,
 ) : ChannelDao {
     private val mappedVisible: Flow<List<ChannelEntity>> =
-        channels.observe(null, null).combine(categories.observe(StreamKind.LIVE)) { rows, groups ->
-            val names = groups.associate { categoryKey(it.sourceId, it.id) to it.name }
-            rows.map { it.toTelly(names) }
-        }
+        channels.observe(null, null)
+            .combine(categories.observe(StreamKind.LIVE)) { rows, groups ->
+                val names = groups.associate { categoryKey(it.sourceId, it.id) to it.name }
+                rows.map { it.toTelly(names) }
+            }
+            .flowOn(Dispatchers.Default)
 
     override fun observeForPlaylist(playlistId: Long): Flow<List<ChannelEntity>> =
         mappedVisible.map { rows -> rows.filter { it.playlistId == playlistId } }
