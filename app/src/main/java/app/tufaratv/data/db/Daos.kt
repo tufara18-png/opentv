@@ -378,26 +378,32 @@ interface ChannelDao {
     @Transaction
     suspend fun upsertCatalogueBatch(sourceId: Long, incoming: List<Channel>, syncStamp: Long) {
         if (incoming.isEmpty()) return
-        val existing = userStateForStreamIds(sourceId, incoming.map { it.streamId })
-            .associateBy { it.streamId }
-        val merged = incoming.map { channel ->
-            val previous = existing[channel.streamId]
-            if (previous == null) {
-                channel.copy(lastSeenMillis = syncStamp)
-            } else {
-                channel.copy(
-                    id = previous.id,
-                    favourite = previous.favourite,
-                    hidden = previous.hidden || channel.hidden,
-                    sortIndex = previous.sortIndex,
-                    customName = previous.customName,
-                    epgOverrideId = previous.epgOverrideId,
-                    matchedEpgId = previous.matchedEpgId,
-                    lastSeenMillis = syncStamp,
-                )
+
+        // Keep bound variables safely below SQLite's 999-variable limit on older Android builds.
+        // The outer transaction still commits once, so Room emits one invalidation for the whole
+        // network batch rather than one per 400 rows.
+        incoming.chunked(400).forEach { chunk ->
+            val existing = userStateForStreamIds(sourceId, chunk.map { it.streamId })
+                .associateBy { it.streamId }
+            val merged = chunk.map { channel ->
+                val previous = existing[channel.streamId]
+                if (previous == null) {
+                    channel.copy(lastSeenMillis = syncStamp)
+                } else {
+                    channel.copy(
+                        id = previous.id,
+                        favourite = previous.favourite,
+                        hidden = previous.hidden || channel.hidden,
+                        sortIndex = previous.sortIndex,
+                        customName = previous.customName,
+                        epgOverrideId = previous.epgOverrideId,
+                        matchedEpgId = previous.matchedEpgId,
+                        lastSeenMillis = syncStamp,
+                    )
+                }
             }
+            upsertAll(merged)
         }
-        upsertAll(merged)
     }
 
     suspend fun finishCatalogueSync(sourceId: Long, syncStamp: Long) {
