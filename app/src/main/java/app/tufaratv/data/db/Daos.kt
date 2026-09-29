@@ -250,12 +250,44 @@ interface ChannelDao {
 
     @Query(
         """
-        SELECT * FROM channels
-        WHERE hidden = 0
-        ORDER BY sortIndex, displayName
+        SELECT c.* FROM channels c
+        WHERE c.hidden = 0
+          AND (
+            c.groupKey = ''
+            OR c.id = (
+                SELECT c2.id
+                FROM channels c2
+                WHERE c2.hidden = 0
+                  AND c2.sourceId = c.sourceId
+                  AND c2.groupKey = c.groupKey
+                ORDER BY c2.qualityRank DESC, c2.sortIndex ASC, c2.id ASC
+                LIMIT 1
+            )
+          )
+        ORDER BY c.sortIndex, c.displayName
         """
     )
-    suspend fun visibleSnapshot(): List<Channel>
+    suspend fun visibleLogicalSnapshot(): List<Channel>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM channels c
+        WHERE c.hidden = 0
+          AND (
+            c.groupKey = ''
+            OR c.id = (
+                SELECT c2.id
+                FROM channels c2
+                WHERE c2.hidden = 0
+                  AND c2.sourceId = c.sourceId
+                  AND c2.groupKey = c.groupKey
+                ORDER BY c2.qualityRank DESC, c2.sortIndex ASC, c2.id ASC
+                LIMIT 1
+            )
+          )
+        """
+    )
+    fun observeVisibleLogicalCount(): Flow<Int>
 
     @Query("UPDATE channels SET favourite = :favourite WHERE id = :id")
     suspend fun setFavourite(id: Long, favourite: Boolean)
