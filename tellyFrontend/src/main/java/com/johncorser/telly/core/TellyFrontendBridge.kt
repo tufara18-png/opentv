@@ -64,6 +64,7 @@ fun ServiceLocator.bridgedPlaybackDeps(
     hooks: PlaybackHooks = PlaybackHooks(),
     resolveStream: suspend (String) -> String = { it },
 ): PlaybackDeps {
+    OpenTvStreamResolver.resolve = resolveStream
     val settings = settingsRepository(context)
     val epg =
         EpgRepository(
@@ -81,12 +82,7 @@ fun ServiceLocator.bridgedPlaybackDeps(
                 myList = myListStore(context),
             ),
         keyValueStore = keyValueStore(context),
-        engineFactory = {
-            OpenTvResolvingPlayerEngine(
-                delegate = tunedEngine(context),
-                resolve = resolveStream,
-            )
-        },
+        engineFactory = { tunedEngine(context) },
         time =
             PlaybackTime(
                 clock = clock,
@@ -180,13 +176,7 @@ fun ServiceLocator.bridgedMultiviewDeps(
         time = playback.time,
         tune =
             MultiviewTune(
-                engines =
-                    PlayerEngineFactory {
-                        OpenTvResolvingPlayerEngine(
-                            delegate = tunedEngine(context, handleAudioFocus = false),
-                            resolve = resolveStream,
-                        )
-                    },
+                engines = PlayerEngineFactory { tunedEngine(context, handleAudioFocus = false) },
                 resolveUrl = proxyResolve(settings),
             ),
     )
@@ -201,12 +191,7 @@ fun ServiceLocator.bridgedVodDeps(
     VodDeps(
         items = items,
         positions = positions,
-        engineFactory = {
-            OpenTvResolvingPlayerEngine(
-                delegate = tunedEngine(context),
-                resolve = resolveStream,
-            )
-        },
+        engineFactory = { tunedEngine(context) },
         rememberPosition = { true },
         clock = clock,
     )
