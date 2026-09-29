@@ -1,8 +1,7 @@
 package app.tufaratv
 
-import android.content.Context
+import android.app.Application
 import androidx.room.Room
-import androidx.test.core.app.ApplicationProvider
 import app.tufaratv.data.db.OpenTvDatabase
 import app.tufaratv.data.model.Channel
 import com.google.common.truth.Truth.assertThat
@@ -11,6 +10,7 @@ import org.junit.After
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 
 @RunWith(RobolectricTestRunner::class)
@@ -19,7 +19,7 @@ class ChannelStreamingBatchRoomTest {
 
     @Before
     fun setUp() {
-        val context = ApplicationProvider.getApplicationContext<Context>()
+        val context = Robolectric.buildApplication(Application::class.java).setup().get()
         db =
             Room.inMemoryDatabaseBuilder(context, OpenTvDatabase::class.java)
                 .allowMainThreadQueries()
