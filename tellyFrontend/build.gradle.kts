@@ -18,6 +18,7 @@ android {
     sourceSets {
         getByName("main") {
             java.srcDir("../telly/app/src/main/java")
+            java.exclude("com/johncorser/telly/features/playback/TuneController.kt")
             res.srcDir("../telly/app/src/main/res")
         }
     }
