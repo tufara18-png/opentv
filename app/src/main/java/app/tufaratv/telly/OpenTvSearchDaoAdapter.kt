@@ -4,11 +4,13 @@ import app.tufaratv.data.db.CategoryDao as OpenTvCategoryDao
 import app.tufaratv.data.db.ChannelDao as OpenTvChannelDao
 import app.tufaratv.data.db.ProgrammeDao as OpenTvProgrammeDao
 import app.tufaratv.data.model.StreamKind
+import app.tufaratv.data.model.shownName
 import com.johncorser.telly.features.epg.db.ProgramDetails
 import com.johncorser.telly.features.epg.db.ProgramEntity
 import com.johncorser.telly.features.playlist.db.ChannelEntity
 import com.johncorser.telly.features.search.db.SearchDao
 import java.util.Locale
+import kotlinx.coroutines.flow.first
 
 /**
  * Search bridge that keeps Telly's search UI while querying OpenTV's catalogue.
@@ -50,7 +52,7 @@ class OpenTvSearchDaoAdapter(
         if (query.isBlank()) return emptyList()
         return programmes
             .observeWindow(atMs, Long.MAX_VALUE)
-            .firstValue()
+            .first()
             .asSequence()
             .filter { it.endUtcMillis > atMs && hasWordPrefix(it.title, query) }
             .sortedWith(compareBy({ it.startUtcMillis }, { it.epgChannelId }))
@@ -88,6 +90,3 @@ class OpenTvSearchDaoAdapter(
             .replace("\\%", "%")
             .replace("\\\\", "\\")
 }
-
-private suspend fun <T> kotlinx.coroutines.flow.Flow<T>.firstValue(): T =
-    kotlinx.coroutines.flow.first(this)
