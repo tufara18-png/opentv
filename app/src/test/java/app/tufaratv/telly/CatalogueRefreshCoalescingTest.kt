@@ -6,7 +6,6 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
-import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.runCurrent
 import org.junit.Test
@@ -19,16 +18,16 @@ class CatalogueRefreshCoalescingTest {
         val seen = mutableListOf<Int>()
 
         val job =
-            backgroundScope.launch {
+            launch {
                 counts.coalescedCatalogueCounts(delayMillis = 5_000).toList(seen)
             }
         runCurrent()
 
-        advanceUntilIdle()
+        runCurrent()
         assertThat(seen).containsExactly(0)
 
         counts.value = 2_000
-        advanceUntilIdle()
+        runCurrent()
         assertThat(seen).containsExactly(0, 2_000)
 
         counts.value = 4_000
@@ -41,7 +40,7 @@ class CatalogueRefreshCoalescingTest {
         assertThat(seen).containsExactly(0, 2_000)
 
         advanceTimeBy(1)
-        advanceUntilIdle()
+        runCurrent()
         assertThat(seen).containsExactly(0, 2_000, 8_000)
 
         job.cancel()
