@@ -48,8 +48,7 @@ class OpenTvProgramDaoAdapter(
         programmes.channelIdsWithProgrammes().size
 
     override fun observeChannelIds(): Flow<List<String>> =
-        programmes.observeWindow(Long.MIN_VALUE, Long.MAX_VALUE)
-            .map { rows -> rows.map(Programme::epgChannelId).distinct().sorted() }
+        programmes.observeChannelIdsWithProgrammes()
 
     private fun Programme.toTelly(): ProgramEntity =
         ProgramEntity(
