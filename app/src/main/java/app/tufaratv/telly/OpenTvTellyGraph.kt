@@ -97,6 +97,8 @@ class OpenTvTellyGraph(context: Context) {
 
     suspend fun fetchPlaylist(url: String): String = playlistFetcher.fetch(url)
 
+    suspend fun hasSources(): Boolean = openTv.sourceRepository.enabled().isNotEmpty()
+
     val searchDao =
         OpenTvSearchDaoAdapter(
             channels = openTv.database.channels(),
