@@ -16,6 +16,9 @@ import kotlinx.coroutines.flow.combine
 class OpenTvPlaylistRepository(
     private val sources: SourceDao,
     private val channels: OpenTvChannelDao,
+    private val addSource: suspend (sourceUrl: String, playlist: M3uPlaylist, name: String?) -> Unit,
+    private val changeSourceUrl: suspend (sourceId: Long, newUrl: String) -> Boolean,
+    private val deleteSource: suspend (sourceId: Long) -> Unit,
 ) : PlaylistRepository {
     override val playlists: Flow<List<StoredPlaylist>> =
         sources.observeAll().combine(channels.observe(null, null)) { sourceRows, channelRows ->
@@ -49,7 +52,7 @@ class OpenTvPlaylistRepository(
         }
 
     override suspend fun add(sourceUrl: String, playlist: M3uPlaylist, name: String?) {
-        error("OpenTV owns source creation; use the OpenTV provider setup flow")
+        addSource(sourceUrl, playlist, name)
     }
 
     override suspend fun rename(sourceUrl: String, name: String) {
@@ -58,10 +61,14 @@ class OpenTvPlaylistRepository(
         sources.update(source.copy(name = name.trim().ifBlank { source.name }))
     }
 
-    override suspend fun changeUrl(oldUrl: String, newUrl: String): Boolean = false
+    override suspend fun changeUrl(oldUrl: String, newUrl: String): Boolean {
+        val id = sourceId(oldUrl) ?: return false
+        return changeSourceUrl(id, newUrl)
+    }
 
     override suspend fun delete(sourceUrl: String) {
-        error("OpenTV owns source deletion; use the OpenTV provider settings")
+        val id = sourceId(sourceUrl) ?: return
+        deleteSource(id)
     }
 
     private fun sourceId(value: String): Long? = value.removePrefix(PREFIX).toLongOrNull()
