@@ -1551,9 +1551,6 @@ class CatalogRepository(
         includeSeries: Boolean,
         onProgress: ((movies: Int, series: Int) -> Unit)? = null,
     ) {
-        // VOD is optional: plenty of accounts have live TV only, and a 404 on get_vod_streams
-        // must not cost the user their channel list. Movies and series are gated independently so
-        // a user who only turned off, say, Series still gets their movie library refreshed.
         val moviesOn = settings.moviesEnabled.value && includeMovies
         val seriesOn = settings.seriesEnabled.value && includeSeries
         if (!moviesOn && !seriesOn) return
@@ -1561,24 +1558,39 @@ class CatalogRepository(
         val movieCategories =
             if (moviesOn) runCatching { api.movieCategories(source) }.getOrDefault(emptyList())
             else emptyList()
-        val movies =
-            if (moviesOn) runCatching { api.movies(source) }.getOrDefault(emptyList())
-            else emptyList()
         val seriesCategories =
             if (seriesOn) runCatching { api.seriesCategories(source) }.getOrDefault(emptyList())
             else emptyList()
-        val series =
-            if (seriesOn) runCatching { api.series(source) }.getOrDefault(emptyList())
-            else emptyList()
-
         if (movieCategories.isNotEmpty() || seriesCategories.isNotEmpty()) {
             categoryDao.upsertAll(movieCategories + seriesCategories)
         }
-        if (movies.isNotEmpty()) movieDao.upsertAll(stampedMovieQuality(movies))
-        if (series.isNotEmpty()) seriesDao.upsertAll(stampedSeriesQuality(series))
-        onProgress?.invoke(movies.size, series.size)
-        if (movies.isNotEmpty()) linkMoviesToCanonical(source.id)
-        if (series.isNotEmpty()) linkSeriesToCanonical(source.id)
+
+        var movieCount = 0
+        var seriesCount = 0
+
+        if (moviesOn) {
+            runCatching {
+                api.streamMovies(source) { batch ->
+                    val stamped = stampedMovieQuality(batch)
+                    movieDao.upsertAll(stamped)
+                    movieCount += stamped.size
+                    onProgress?.invoke(movieCount, seriesCount)
+                }
+                linkMoviesToCanonical(source.id)
+            }.onFailure { Log.w(TAG, "Xtream movie sync failed for source ${source.id}", it) }
+        }
+
+        if (seriesOn) {
+            runCatching {
+                api.streamSeries(source) { batch ->
+                    val stamped = stampedSeriesQuality(batch)
+                    seriesDao.upsertAll(stamped)
+                    seriesCount += stamped.size
+                    onProgress?.invoke(movieCount, seriesCount)
+                }
+                linkSeriesToCanonical(source.id)
+            }.onFailure { Log.w(TAG, "Xtream series sync failed for source ${source.id}", it) }
+        }
     }
 
     /**
