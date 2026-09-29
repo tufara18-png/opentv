@@ -10,9 +10,11 @@ import com.johncorser.telly.features.vod.db.VodItemDao
 import com.johncorser.telly.features.vod.db.VodItemEntity
 import com.johncorser.telly.features.vod.db.VodPositionDao
 import com.johncorser.telly.features.vod.db.VodPositionEntity
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
@@ -21,21 +23,23 @@ class OpenTvVodItemDaoAdapter(
     private val categories: OpenTvCategoryDao,
 ) : VodItemDao {
     override fun observeAll(): Flow<List<VodItemEntity>> =
-        movies.observe(null).combine(categories.observe(StreamKind.MOVIE)) { rows, groups ->
-            val names = groups.associate { "${it.sourceId}:${it.id}" to it.name }
-            rows.mapIndexed { index, movie ->
-                VodItemEntity(
-                    id = movie.id,
-                    playlistId = movie.sourceId,
-                    sortIndex = index,
-                    itemKey = key(movie.id),
-                    name = movie.name,
-                    groupTitle = movie.categoryId?.let { names["${movie.sourceId}:$it"] ?: it },
-                    logoUrl = movie.posterUrl,
-                    streamUrl = movie.streamUrl,
-                )
+        movies.observe(null)
+            .combine(categories.observe(StreamKind.MOVIE)) { rows, groups ->
+                val names = groups.associate { "${it.sourceId}:${it.id}" to it.name }
+                rows.mapIndexed { index, movie ->
+                    VodItemEntity(
+                        id = movie.id,
+                        playlistId = movie.sourceId,
+                        sortIndex = index,
+                        itemKey = key(movie.id),
+                        name = movie.name,
+                        groupTitle = movie.categoryId?.let { names["${movie.sourceId}:$it"] ?: it },
+                        logoUrl = movie.posterUrl,
+                        streamUrl = movie.streamUrl,
+                    )
+                }
             }
-        }
+            .flowOn(Dispatchers.Default)
 
     override suspend fun byKey(itemKey: String): VodItemEntity? {
         val id = itemKey.removePrefix(PREFIX).toLongOrNull() ?: return null
