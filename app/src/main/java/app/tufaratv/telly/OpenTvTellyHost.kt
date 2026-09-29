@@ -11,14 +11,14 @@ import com.johncorser.telly.core.navigation.Route
 /**
  * Android-TV host for the real Telly frontend over OpenTV data.
  *
- * The host deliberately starts at the guide. OpenTV's existing onboarding
- * remains responsible for creating the first provider/source.
+ * Telly owns the complete TV surface, including first-run onboarding.
+ * OpenTV remains behind it as the source/catalogue/EPG backend.
  */
 @Composable
-fun OpenTvTellyHost() {
+fun OpenTvTellyHost(hasSources: Boolean) {
     val context = LocalContext.current
     val graph = remember(context.applicationContext) { OpenTvTellyGraph(context.applicationContext) }
-    val navigator = remember { Navigator(start = Route.Guide) }
+    val navigator = remember(hasSources) { Navigator(start = if (hasSources) Route.Guide else Route.Welcome) }
 
     RootScreen(
         navigator = navigator,
