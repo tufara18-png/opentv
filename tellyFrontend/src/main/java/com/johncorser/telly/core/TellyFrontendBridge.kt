@@ -25,7 +25,6 @@ import com.johncorser.telly.features.player.PlayerEngineFactory
 import com.johncorser.telly.features.player.skip.SkipSteps
 import com.johncorser.telly.features.playlist.PlaylistRepository
 import com.johncorser.telly.features.playlist.db.ChannelDao
-import com.johncorser.telly.features.recording.recordingCenter
 import com.johncorser.telly.features.search.SearchDeps
 import com.johncorser.telly.features.search.SearchHistory
 import com.johncorser.telly.features.search.SearchHooks
@@ -78,7 +77,6 @@ fun ServiceLocator.bridgedPlaybackDeps(
         hooks =
             hooks.copy(
                 playerKeymap = { PlayerKeymap.from(settings) },
-                recording = recordingCenter(context),
                 parental = ParentalControls(settings),
                 blockSession = BlockSession(),
                 catchup =
