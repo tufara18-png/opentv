@@ -8,6 +8,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.test.advanceTimeBy
 import kotlinx.coroutines.test.advanceUntilIdle
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.runCurrent
 import org.junit.Test
 
 @OptIn(ExperimentalCoroutinesApi::class)
@@ -21,6 +22,7 @@ class CatalogueRefreshCoalescingTest {
             backgroundScope.launch {
                 counts.coalescedCatalogueCounts(delayMillis = 5_000).toList(seen)
             }
+        runCurrent()
 
         counts.emit(0)
         advanceUntilIdle()
