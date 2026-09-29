@@ -10,7 +10,9 @@ import com.johncorser.telly.features.vod.db.VodItemDao
 import com.johncorser.telly.features.vod.db.VodItemEntity
 import com.johncorser.telly.features.vod.db.VodPositionDao
 import com.johncorser.telly.features.vod.db.VodPositionEntity
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.map
 
@@ -107,10 +109,11 @@ class OpenTvVodPositionDaoAdapter(
         )
 }
 
+@OptIn(ExperimentalCoroutinesApi::class)
 private fun kotlinx.coroutines.flow.StateFlow<Long>.flatMapRecent(
     positions: OpenTvPlaybackPositionDao,
 ): Flow<List<VodPositionEntity>> =
-    kotlinx.coroutines.flow.flatMapLatest { profileId ->
+    flatMapLatest { profileId ->
         positions.observeRecent(profileId, 200).map { rows ->
             rows.map {
                 VodPositionEntity(
