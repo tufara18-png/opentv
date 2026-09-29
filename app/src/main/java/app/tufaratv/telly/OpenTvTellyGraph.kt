@@ -14,7 +14,6 @@ import com.johncorser.telly.core.bridgedSettingsGraph
 import com.johncorser.telly.core.bridgedVodDeps
 import com.johncorser.telly.core.guideDeps
 import com.johncorser.telly.core.playlistFetchUserAgentFor
-import com.johncorser.telly.core.tunedEngine
 import com.johncorser.telly.features.guide.GuideDeps
 import com.johncorser.telly.features.multiview.MultiviewDeps
 import com.johncorser.telly.features.playback.PlaybackDeps
@@ -122,7 +121,7 @@ class OpenTvTellyGraph(context: Context) {
             context = appContext,
             channelDao = channels,
             programDao = programmes,
-            engineFactory = { resolvingEngine() },
+            resolveStream = ::resolveStreamUrl,
         )
 
     val guide: GuideDeps =
@@ -144,7 +143,7 @@ class OpenTvTellyGraph(context: Context) {
             context = appContext,
             channelDao = channels,
             playback = playback,
-            engineFactory = { resolvingEngine(handleAudioFocus = false) },
+            resolveStream = ::resolveStreamUrl,
         )
 
     val vod: VodDeps =
@@ -152,7 +151,7 @@ class OpenTvTellyGraph(context: Context) {
             context = appContext,
             items = vodItems,
             positions = vodPositions,
-            engineFactory = { resolvingEngine() },
+            resolveStream = ::resolveStreamUrl,
         )
 
     val reminders: RemindersHub =
@@ -163,12 +162,6 @@ class OpenTvTellyGraph(context: Context) {
 
     val recording: RecordingDeps =
         TellyServiceLocator.recordingDeps(appContext)
-
-    private fun resolvingEngine(handleAudioFocus: Boolean = true) =
-        OpenTvResolvingPlayerEngine(
-            delegate = TellyServiceLocator.tunedEngine(appContext, handleAudioFocus = handleAudioFocus),
-            resolve = ::resolveStreamUrl,
-        )
 
     private suspend fun resolveStreamUrl(url: String): String {
         if (!url.startsWith("stalker://")) return url
