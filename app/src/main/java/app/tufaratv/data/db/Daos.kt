@@ -673,6 +673,9 @@ interface MovieDao {
     @Query("SELECT * FROM movies WHERE sourceId = :sourceId AND canonicalId IS NULL")
     suspend fun pendingCanonicalLink(sourceId: Long): List<Movie>
 
+    @Query("SELECT * FROM movies WHERE sourceId = :sourceId AND canonicalId IS NULL LIMIT :limit")
+    suspend fun pendingCanonicalLinkBatch(sourceId: Long, limit: Int): List<Movie>
+
     @Query("UPDATE movies SET canonicalId = :canonicalId, canonicalMatchKind = :matchKind WHERE id = :id")
     suspend fun setCanonical(id: Long, canonicalId: Long, matchKind: CanonicalMatchKind)
 }
@@ -761,6 +764,9 @@ interface SeriesDao {
     /** See [MovieDao.pendingCanonicalLink]. */
     @Query("SELECT * FROM series WHERE sourceId = :sourceId AND canonicalId IS NULL")
     suspend fun pendingCanonicalLink(sourceId: Long): List<Series>
+
+    @Query("SELECT * FROM series WHERE sourceId = :sourceId AND canonicalId IS NULL LIMIT :limit")
+    suspend fun pendingCanonicalLinkBatch(sourceId: Long, limit: Int): List<Series>
 
     @Query("UPDATE series SET canonicalId = :canonicalId, canonicalMatchKind = :matchKind WHERE id = :id")
     suspend fun setCanonical(id: Long, canonicalId: Long, matchKind: CanonicalMatchKind)
