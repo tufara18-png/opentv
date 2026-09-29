@@ -103,5 +103,21 @@ class OpenTvTellyGraph(context: Context) {
             playlists = playlists,
             channelDao = channels,
             positions = vodPositions,
+            refreshPlaylist = { sourceKey ->
+                val sourceId = sourceKey.substringAfterLast('/').toLongOrNull()
+                val source = sourceId?.let { openTv.sourceRepository.byId(it) }
+                if (source == null) {
+                    false
+                } else {
+                    openTv.catalogRepository.sync(source, System.currentTimeMillis()) is
+                        app.tufaratv.data.repo.CatalogRepository.SyncResult.Success
+                }
+            },
+            refreshEpg = {
+                openTv.epgRepository.syncAll(
+                    nowUtcMillis = System.currentTimeMillis(),
+                    force = true,
+                ).feedsSucceeded
+            },
         )
 }
