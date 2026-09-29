@@ -47,10 +47,10 @@ class OpenTvChannelDaoAdapter(
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
 
     private val mappedVisible: Flow<List<ChannelEntity>> =
-        channels.observeVisibleCount()
+        channels.observeVisibleLogicalCount()
             .coalescedCatalogueCounts()
             .mapLatest {
-                val rows = channels.visibleSnapshot()
+                val rows = channels.visibleLogicalSnapshot()
                 val groups = categories.allByKind(StreamKind.LIVE)
                 val names = groups.associate { categoryKey(it.sourceId, it.id) to it.name }
                 rows.map { row -> row.toTelly(names) }
@@ -111,7 +111,7 @@ class OpenTvChannelDaoAdapter(
      */
     override fun observeAll(): Flow<List<ChannelEntity>> = mappedVisible
 
-    override suspend fun totalCount(): Int = channels.totalVisibleCount()
+    override suspend fun totalCount(): Int = channels.visibleLogicalSnapshot().size
 
     override suspend fun forPlaylist(playlistId: Long): List<ChannelEntity> {
         val names = categories.allByKind(StreamKind.LIVE)
