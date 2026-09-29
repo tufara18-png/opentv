@@ -7,7 +7,6 @@ import androidx.compose.ui.platform.LocalContext
 import com.johncorser.telly.RootScreen
 import com.johncorser.telly.core.navigation.Navigator
 import com.johncorser.telly.core.navigation.Route
-import kotlinx.coroutines.flow.first
 
 /**
  * Android-TV host for the real Telly frontend over OpenTV data.
@@ -23,7 +22,7 @@ fun OpenTvTellyHost(
     val context = LocalContext.current
     val graph = remember(context.applicationContext) { OpenTvTellyGraph(context.applicationContext) }
     LaunchedEffect(graph) {
-        val hasSources = graph.playlists.playlists.first().isNotEmpty()
+        val hasSources = graph.hasSources()
         navigator.replaceAll(if (hasSources) Route.Guide else Route.Welcome)
     }
 
