@@ -8,7 +8,7 @@ plugins {
 
 android {
     namespace = "app.tufaratv"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         applicationId = "app.tufaratv"
