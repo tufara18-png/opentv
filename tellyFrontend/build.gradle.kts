@@ -8,11 +8,11 @@ plugins {
 
 android {
     namespace = "com.johncorser.telly"
-    compileSdk = 35
+    compileSdk = 36
 
     defaultConfig {
         minSdk = 23
-        targetSdk = 35
+        targetSdk = 36
     }
 
     sourceSets {
