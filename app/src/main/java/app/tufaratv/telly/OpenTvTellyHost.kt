@@ -4,7 +4,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
-import app.tufaratv.MainActivity
 import com.johncorser.telly.RootScreen
 import com.johncorser.telly.core.navigation.Navigator
 import com.johncorser.telly.core.navigation.Route
@@ -17,11 +16,12 @@ import kotlinx.coroutines.flow.first
  * OpenTV remains behind it as the source/catalogue/EPG backend.
  */
 @Composable
-fun OpenTvTellyHost() {
+fun OpenTvTellyHost(
+    navigator: Navigator,
+    onEnterPip: () -> Unit,
+) {
     val context = LocalContext.current
     val graph = remember(context.applicationContext) { OpenTvTellyGraph(context.applicationContext) }
-    val navigator = remember { Navigator(start = Route.Boot) }
-
     LaunchedEffect(graph) {
         val hasSources = graph.playlists.playlists.first().isNotEmpty()
         navigator.replaceAll(if (hasSources) Route.Guide else Route.Welcome)
@@ -37,7 +37,7 @@ fun OpenTvTellyHost() {
         searchDeps = graph.search,
         multiviewDeps = graph.multiview,
         vodDeps = graph.vod,
-        onEnterPip = { (context as? MainActivity)?.enterPipNow() },
+        onEnterPip = onEnterPip,
         reminders = graph.reminders,
         recordingDeps = graph.recording,
         onboardingRestore = null,
