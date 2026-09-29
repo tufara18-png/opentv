@@ -54,7 +54,7 @@ class OpenTvChannelDaoAdapter(
                         emittedFirstPositive = true
                         emit(count)
                     } else {
-                        if (count > 0) kotlinx.coroutines.delay(750)
+                        if (count > 0) kotlinx.coroutines.delay(5_000)
                         emit(count)
                     }
                 }
