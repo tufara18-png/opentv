@@ -7,8 +7,10 @@ import com.johncorser.telly.features.playlist.M3uChannel
 import com.johncorser.telly.features.playlist.M3uPlaylist
 import com.johncorser.telly.features.playlist.PlaylistRepository
 import com.johncorser.telly.features.playlist.StoredPlaylist
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 
 /**
  * Presents OpenTV sources as Telly playlists without moving source ownership.
@@ -21,9 +23,10 @@ class OpenTvPlaylistRepository(
     private val deleteSource: suspend (sourceId: Long) -> Unit,
 ) : PlaylistRepository {
     override val playlists: Flow<List<StoredPlaylist>> =
-        sources.observeAll().combine(channels.observe(null, null)) { sourceRows, channelRows ->
-            sourceRows.map { source ->
-                StoredPlaylist(
+        sources.observeAll()
+            .combine(channels.observe(null, null)) { sourceRows, channelRows ->
+                sourceRows.map { source ->
+                    StoredPlaylist(
                     sourceUrl = sourceKey(source.id),
                     name = source.name,
                     playlist =
@@ -48,8 +51,9 @@ class OpenTvPlaylistRepository(
                                     .toList(),
                         ),
                 )
+                }
             }
-        }
+            .flowOn(Dispatchers.Default)
 
     override suspend fun add(sourceUrl: String, playlist: M3uPlaylist, name: String?) {
         addSource(sourceUrl, playlist, name)
