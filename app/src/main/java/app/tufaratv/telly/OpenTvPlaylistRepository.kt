@@ -2,6 +2,7 @@ package app.tufaratv.telly
 
 import app.tufaratv.data.db.ChannelDao as OpenTvChannelDao
 import app.tufaratv.data.db.SourceDao
+import app.tufaratv.data.model.shownName
 import com.johncorser.telly.features.playlist.M3uChannel
 import com.johncorser.telly.features.playlist.M3uPlaylist
 import com.johncorser.telly.features.playlist.PlaylistRepository
