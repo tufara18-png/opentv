@@ -7,8 +7,6 @@ on:
 
 permissions:
   contents: read
-  issues: write
-  pull-requests: write
 
 concurrency:
   group: telly-integration-${{ github.ref }}
@@ -76,55 +74,23 @@ jobs:
           tail -n 100 assemble.log > assemble-tail.txt
           exit 0
 
-      - name: Publish verification result to PR
+      - name: Verify integration result
         if: always()
-        uses: actions/github-script@v7
+        shell: bash
         env:
           SUBMODULE_CODE: ${{ steps.submodule.outputs.code }}
           COMPILE_CODE: ${{ steps.compile.outputs.code }}
           TEST_CODE: ${{ steps.tests.outputs.code }}
           ASSEMBLE_CODE: ${{ steps.assemble.outputs.code }}
-        with:
-          script: |
-            const fs = require('fs');
-            const read = (path) => fs.existsSync(path) ? fs.readFileSync(path, 'utf8') : '';
-            const submodule = process.env.SUBMODULE_CODE || 'skipped';
-            const compile = process.env.COMPILE_CODE || 'skipped';
-            const tests = process.env.TEST_CODE || 'skipped';
-            const assemble = process.env.ASSEMBLE_CODE || 'skipped';
-            const failingLog =
-              submodule !== '0' ? read('submodule-tail.txt') :
-              compile !== '0' ? read('compile-tail.txt') :
-              tests !== '0' ? read('tests-tail.txt') :
-              assemble !== '0' ? read('assemble-tail.txt') : '';
-            const ok = submodule === '0' && compile === '0' && tests === '0' && assemble === '0';
-            const body = [
-              '<!-- telly-integration-ci -->',
-              '### Telly integration CI',
-              '',
-              `Commit: \`${context.sha.slice(0, 8)}\``,
-              `Submodule: **${submodule === '0' ? 'PASS' : submodule === 'skipped' ? 'SKIPPED' : 'FAIL'}**`,
-              `Compile: **${compile === '0' ? 'PASS' : compile === 'skipped' ? 'SKIPPED' : 'FAIL'}**`,
-              `Unit tests: **${tests === '0' ? 'PASS' : tests === 'skipped' ? 'SKIPPED' : 'FAIL'}**`,
-              `APK: **${assemble === '0' ? 'PASS' : assemble === 'skipped' ? 'SKIPPED' : 'FAIL'}**`,
-              failingLog ? '\n<details><summary>Failure log tail</summary>\n\n\`\`\`text\n' + failingLog.slice(-12000) + '\n\`\`\`\n</details>' : '',
-            ].join('\n');
-            const { data: comments } = await github.rest.issues.listComments({
-              owner: context.repo.owner, repo: context.repo.repo, issue_number: 4,
-            });
-            const old = comments.find(c => c.user.type === 'Bot' && c.body?.includes('<!-- telly-integration-ci -->'));
-            if (old) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                comment_id: old.id, body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner, repo: context.repo.repo,
-                issue_number: 4, body,
-              });
-            }
-            if (!ok) core.setFailed('Telly integration verification failed');
+        run: |
+          echo "Submodule: ${SUBMODULE_CODE:-skipped}"
+          echo "Compile: ${COMPILE_CODE:-skipped}"
+          echo "Tests: ${TEST_CODE:-skipped}"
+          echo "APK: ${ASSEMBLE_CODE:-skipped}"
+          test "${SUBMODULE_CODE:-1}" = "0"
+          test "${COMPILE_CODE:-1}" = "0"
+          test "${TEST_CODE:-1}" = "0"
+          test "${ASSEMBLE_CODE:-1}" = "0"
 
       - name: Upload APK
         if: steps.assemble.outputs.code == '0'
