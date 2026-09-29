@@ -5,6 +5,7 @@
  */
 package app.tufaratv
 
+import android.app.UiModeManager
 import android.content.Context
 import android.content.res.Configuration
 import android.os.Bundle
@@ -51,9 +52,19 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** Compatibility shim for legacy OpenTV UI sources that still compile but are never routed. */
+    fun enterPipNow() {
+        pip.enter()
+    }
+
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
         pip.onUserLeaveHint()
+    }
+
+    companion object {
+        const val EXTRA_PLAY_CHANNEL = "opentv.play_channel"
+        const val EXTRA_WATCH_RECORDING = "opentv.watch_recording"
     }
 
     override fun onPictureInPictureModeChanged(
@@ -63,4 +74,16 @@ class MainActivity : ComponentActivity() {
         super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
         pip.onModeChanged(isInPictureInPictureMode)
     }
+}
+
+
+/**
+ * Legacy compile-time helper. The OpenTV Compose frontend is no longer mounted.
+ */
+fun isRunningOnTelevision(context: Context): Boolean {
+    val uiModeManager = context.getSystemService(Context.UI_MODE_SERVICE) as? UiModeManager
+    if (uiModeManager?.currentModeType == Configuration.UI_MODE_TYPE_TELEVISION) return true
+    val packageManager = context.packageManager
+    return packageManager.hasSystemFeature("android.software.leanback") ||
+        packageManager.hasSystemFeature("android.hardware.type.television")
 }
