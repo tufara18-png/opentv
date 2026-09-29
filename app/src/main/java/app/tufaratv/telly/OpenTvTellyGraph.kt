@@ -5,6 +5,7 @@ import app.tufaratv.core.ServiceLocator as OpenTvServiceLocator
 import com.johncorser.telly.core.ServiceLocator as TellyServiceLocator
 import com.johncorser.telly.core.bridgedMultiviewDeps
 import com.johncorser.telly.core.bridgedPlaybackDeps
+import com.johncorser.telly.core.bridgedRemindersHub
 import com.johncorser.telly.core.bridgedSearchDeps
 import com.johncorser.telly.core.bridgedSettingsGraph
 import com.johncorser.telly.core.bridgedVodDeps
@@ -12,6 +13,9 @@ import com.johncorser.telly.core.guideDeps
 import com.johncorser.telly.features.guide.GuideDeps
 import com.johncorser.telly.features.multiview.MultiviewDeps
 import com.johncorser.telly.features.playback.PlaybackDeps
+import com.johncorser.telly.features.recording.RecordingDeps
+import com.johncorser.telly.features.recording.recordingDeps
+import com.johncorser.telly.features.reminders.RemindersHub
 import com.johncorser.telly.features.search.SearchDeps
 import com.johncorser.telly.features.settings.SettingsGraph
 import com.johncorser.telly.features.vod.VodDeps
@@ -96,6 +100,15 @@ class OpenTvTellyGraph(context: Context) {
             items = vodItems,
             positions = vodPositions,
         )
+
+    val reminders: RemindersHub =
+        TellyServiceLocator.bridgedRemindersHub(
+            context = appContext,
+            channelDao = channels,
+        )
+
+    val recording: RecordingDeps =
+        TellyServiceLocator.recordingDeps(appContext)
 
     val settings: SettingsGraph =
         TellyServiceLocator.bridgedSettingsGraph(
