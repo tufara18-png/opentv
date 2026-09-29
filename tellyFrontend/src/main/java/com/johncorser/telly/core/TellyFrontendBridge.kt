@@ -22,6 +22,14 @@ import com.johncorser.telly.features.playback.PlaybackSources
 import com.johncorser.telly.features.playback.PlaybackTime
 import com.johncorser.telly.features.playback.PlayerKeymap
 import com.johncorser.telly.features.player.PlayerEngineFactory
+import com.johncorser.telly.features.recording.recordingCenter
+import com.johncorser.telly.features.reminders.GuideReminders
+import com.johncorser.telly.features.reminders.ReminderChannelNames
+import com.johncorser.telly.features.reminders.ReminderEngine
+import com.johncorser.telly.features.reminders.ReminderPopupController
+import com.johncorser.telly.features.reminders.ReminderSettingsFeed
+import com.johncorser.telly.features.reminders.ReminderStore
+import com.johncorser.telly.features.reminders.RemindersHub
 import com.johncorser.telly.features.player.skip.SkipSteps
 import com.johncorser.telly.features.playlist.M3uPlaylist
 import com.johncorser.telly.features.playlist.PlaylistRepository
@@ -41,8 +49,13 @@ import com.johncorser.telly.features.settings.SettingsStores
 import com.johncorser.telly.features.vod.VodDeps
 import com.johncorser.telly.features.vod.db.VodItemDao
 import com.johncorser.telly.features.vod.db.VodPositionDao
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.launch
+import java.util.TimeZone
 
 fun ServiceLocator.bridgedPlaybackDeps(
     context: Context,
@@ -80,6 +93,7 @@ fun ServiceLocator.bridgedPlaybackDeps(
         hooks =
             hooks.copy(
                 playerKeymap = { PlayerKeymap.from(settings) },
+                recording = recordingCenter(context),
                 parental = ParentalControls(settings),
                 blockSession = BlockSession(),
                 catchup =
@@ -91,6 +105,37 @@ fun ServiceLocator.bridgedPlaybackDeps(
                 resolveUrl = proxyResolve(settings),
                 customGroups = RoomCustomGroupStore(database(context).customGroupDao),
             ),
+    )
+}
+
+fun ServiceLocator.bridgedRemindersHub(
+    context: Context,
+    channelDao: ChannelDao,
+): RemindersHub {
+    val db = database(context)
+    val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
+    val store = ReminderStore(db.reminderDao())
+    val channels = channelDao.observeVisible()
+    val names = ReminderChannelNames(channels)
+    val zone = TimeZone.getDefault()
+    val popup = ReminderPopupController(keyValueStore(context), scope, zone)
+    val prefs = settingsRepository(context)
+    ReminderEngine(
+        store = store,
+        clock = clock,
+        leadMinutes = { prefs.get(TellySettings.REMINDER_LEAD_MINUTES) },
+        onDue = { reminder ->
+            scope.launch { popup.show(reminder, names.nameOf(reminder.channelId)) }
+        },
+    ).startIn(scope, PlaybackTime.minuteBoundaryTicks(clock))
+
+    return RemindersHub(
+        database = db,
+        store = store,
+        guide = GuideReminders(store, scope),
+        settingsFeed = ReminderSettingsFeed(store, channels, zone),
+        popup = popup,
+        scope = scope,
     )
 }
 
