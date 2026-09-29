@@ -84,6 +84,7 @@ import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.nativeKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -207,6 +208,7 @@ fun PlayerScreen(
     var resizeMode by remember { mutableIntStateOf(settings.playerResizeMode.value) }
 
     var controlsVisible by remember { mutableStateOf(true) }
+    var quickBarVisible by remember { mutableStateOf(false) }
     var panel by remember { mutableStateOf(Panel.NONE) }
     var channelListVisible by remember { mutableStateOf(false) }
     var programmeListVisible by remember { mutableStateOf(false) }
@@ -349,6 +351,7 @@ fun PlayerScreen(
     // you wanted to dismiss the bar.
     BackHandler {
         when {
+            quickBarVisible -> quickBarVisible = false
             programmeListVisible -> programmeListVisible = false
             channelListVisible -> channelListVisible = false
             panel != Panel.NONE -> panel = Panel.NONE
@@ -397,9 +400,26 @@ fun PlayerScreen(
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                 val digit = keyToDigit(event.key)
+                val isMenu = event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_MENU
+                val isLongOk = (
+                    event.key == Key.Enter ||
+                        event.nativeKeyEvent.keyCode == android.view.KeyEvent.KEYCODE_DPAD_CENTER
+                    ) && event.nativeKeyEvent.repeatCount > 0
                 when {
                     // Never swallow Back/Escape — they must reach the back handler.
                     event.key == Key.Back || event.key == Key.Escape -> false
+                    // Telly/TiviMate-style quick bar: MENU or long-OK from fullscreen.
+                    isMenu || isLongOk -> {
+                        quickBarVisible = true
+                        controlsVisible = false
+                        panel = Panel.NONE
+                        channelListVisible = false
+                        programmeListVisible = false
+                        interaction++
+                        true
+                    }
+                    // Once open, the quick bar owns the D-pad/OK focus.
+                    quickBarVisible -> false
                     // Typing a channel number jumps to it, TiviMate-style.
                     digit != null -> {
                         numberEntry = (numberEntry + digit).take(4)
@@ -683,6 +703,61 @@ fun PlayerScreen(
                     }
                 }
             }
+        }
+
+        AnimatedVisibility(
+            visible = quickBarVisible && !inPip,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.align(Alignment.BottomCenter),
+        ) {
+            val recordingThis = activeRecordings.any { it.channelId == currentId }
+            TellyQuickBar(
+                hasSchedule = programmeSchedule.isNotEmpty(),
+                hasQualityVariants = variants.size > 1,
+                pipSupported = pipSupported,
+                recording = recordingThis,
+                onChannels = {
+                    quickBarVisible = false
+                    channelListVisible = queue.isNotEmpty()
+                },
+                onSchedule = {
+                    quickBarVisible = false
+                    programmeListVisible = programmeSchedule.isNotEmpty()
+                },
+                onSubtitles = {
+                    quickBarVisible = false
+                    controlsVisible = true
+                    panel = Panel.SUBTITLES
+                    interaction++
+                },
+                onAudio = {
+                    quickBarVisible = false
+                    controlsVisible = true
+                    panel = Panel.AUDIO
+                    interaction++
+                },
+                onQuality = {
+                    quickBarVisible = false
+                    controlsVisible = true
+                    panel = Panel.QUALITY
+                    interaction++
+                },
+                onAspect = {
+                    quickBarVisible = false
+                    controlsVisible = true
+                    panel = Panel.ASPECT
+                    interaction++
+                },
+                onRecord = {
+                    quickBarVisible = false
+                    toggleRecord()
+                },
+                onPip = {
+                    quickBarVisible = false
+                    (context.findActivity() as? app.tufaratv.MainActivity)?.enterPipNow()
+                },
+            )
         }
 
         // Left-side transparent channel list — d-pad Left opens it, pick a channel to switch.
