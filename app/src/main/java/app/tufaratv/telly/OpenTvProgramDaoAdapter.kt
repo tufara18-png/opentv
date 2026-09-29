@@ -27,7 +27,7 @@ class OpenTvProgramDaoAdapter(
         toMs: Long,
     ): Flow<List<ProgramEntity>> =
         programmes.observeWindowForChannels(tvgIds, fromMs, toMs)
-            .map { rows -> rows.map(Programme::toTelly) }
+            .map { rows -> rows.map { it.toTelly() } }
 
     override fun observeAiringOrUpcoming(
         tvgIds: List<String>,
