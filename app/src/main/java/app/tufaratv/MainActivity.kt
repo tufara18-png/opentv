@@ -90,6 +90,7 @@ import app.tufaratv.ui.vod.PersonScreen
 import app.tufaratv.ui.vod.SeriesDetailScreen
 import app.tufaratv.ui.vod.VodPlayerScreen
 import app.tufaratv.update.UpdateGate
+import app.tufaratv.telly.OpenTvTellyHost
 
 class MainActivity : ComponentActivity() {
 
@@ -284,6 +285,11 @@ private fun TufaraTvApp(isTelevision: Boolean) {
 
     val bootContext = androidx.compose.ui.platform.LocalContext.current
     val bootSettings = remember { ServiceLocator.get(bootContext).settings }
+
+    if (isTelevision && sourcesUi.sources.isNotEmpty() && bootSettings.libraryPrepared) {
+        OpenTvTellyHost()
+        return
+    }
 
     // First run, or a first-run preparation interrupted after credentials were saved, returns to
     // onboarding. Existing installs default libraryPrepared=true and are never forced through it.
