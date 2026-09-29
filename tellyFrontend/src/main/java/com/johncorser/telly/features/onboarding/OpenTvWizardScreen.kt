@@ -36,6 +36,9 @@ import com.johncorser.telly.core.design.TELLY_TEXT_PRIMARY
 import com.johncorser.telly.core.ui.ScreenCrossfade
 import com.johncorser.telly.features.playlist.PlaylistRepository
 import kotlinx.coroutines.launch
+import java.net.URI
+import java.net.URLDecoder
+import java.nio.charset.StandardCharsets
 
 /**
  * Telly-native onboarding with OpenTV-backed Xtream and Stalker support.
@@ -163,7 +166,18 @@ fun WizardScreen(
                         url = state.url,
                         error = state.error,
                         onUrlChange = viewModel::setUrl,
-                        onNext = viewModel::submitUrl,
+                        onNext = {
+                            val detected = detectXtreamGetPhp(state.url)
+                            if (detected != null) {
+                                providerType = PlaylistType.XTREAM_CODES
+                                url = detected.baseUrl
+                                username = detected.username
+                                password = detected.password
+                                providerError = null
+                            } else {
+                                viewModel.submitUrl()
+                            }
+                        },
                         onBack = { if (!viewModel.back()) onExit() },
                         modifier = Modifier.weight(1f),
                     )
@@ -335,4 +349,48 @@ private fun ProviderGuidance(
             )
         }
     }
+}
+
+
+private data class DetectedXtream(
+    val baseUrl: String,
+    val username: String,
+    val password: String,
+)
+
+private fun detectXtreamGetPhp(raw: String): DetectedXtream? {
+    val value = raw.trim()
+    val uri = runCatching { URI(value) }.getOrNull() ?: return null
+    val path = uri.path.orEmpty()
+    if (!path.endsWith("/get.php", ignoreCase = true) && !path.equals("get.php", ignoreCase = true)) {
+        return null
+    }
+
+    val params =
+        uri.rawQuery
+            ?.split('&')
+            ?.mapNotNull { part ->
+                val pieces = part.split('=', limit = 2)
+                if (pieces.isEmpty()) return@mapNotNull null
+                val key = URLDecoder.decode(pieces[0], StandardCharsets.UTF_8.name())
+                val decoded =
+                    URLDecoder.decode(
+                        pieces.getOrElse(1) { "" },
+                        StandardCharsets.UTF_8.name(),
+                    )
+                key to decoded
+            }
+            ?.toMap()
+            .orEmpty()
+
+    val username = params["username"]?.takeIf { it.isNotBlank() } ?: return null
+    val password = params["password"]?.takeIf { it.isNotBlank() } ?: return null
+    val scheme = uri.scheme?.takeIf { it.equals("http", true) || it.equals("https", true) } ?: return null
+    val host = uri.host ?: return null
+    val port = if (uri.port >= 0) ":${uri.port}" else ""
+    return DetectedXtream(
+        baseUrl = "$scheme://$host$port",
+        username = username,
+        password = password,
+    )
 }
