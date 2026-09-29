@@ -2,6 +2,7 @@ package app.tufaratv.telly
 
 import android.content.Context
 import app.tufaratv.core.ServiceLocator as OpenTvServiceLocator
+import app.tufaratv.data.repo.SourceVariant
 import com.johncorser.telly.core.ServiceLocator as TellyServiceLocator
 import com.johncorser.telly.core.bridgedMultiviewDeps
 import com.johncorser.telly.core.bridgedPlaybackDeps
@@ -10,6 +11,7 @@ import com.johncorser.telly.core.bridgedSearchDeps
 import com.johncorser.telly.core.bridgedSettingsGraph
 import com.johncorser.telly.core.bridgedVodDeps
 import com.johncorser.telly.core.guideDeps
+import com.johncorser.telly.core.tunedEngine
 import com.johncorser.telly.features.guide.GuideDeps
 import com.johncorser.telly.features.multiview.MultiviewDeps
 import com.johncorser.telly.features.playback.PlaybackDeps
@@ -71,6 +73,7 @@ class OpenTvTellyGraph(context: Context) {
             context = appContext,
             channelDao = channels,
             programDao = programmes,
+            engineFactory = { resolvingEngine() },
         )
 
     val guide: GuideDeps =
@@ -92,6 +95,7 @@ class OpenTvTellyGraph(context: Context) {
             context = appContext,
             channelDao = channels,
             playback = playback,
+            engineFactory = { resolvingEngine(handleAudioFocus = false) },
         )
 
     val vod: VodDeps =
@@ -99,6 +103,7 @@ class OpenTvTellyGraph(context: Context) {
             context = appContext,
             items = vodItems,
             positions = vodPositions,
+            engineFactory = { resolvingEngine() },
         )
 
     val reminders: RemindersHub =
@@ -109,6 +114,59 @@ class OpenTvTellyGraph(context: Context) {
 
     val recording: RecordingDeps =
         TellyServiceLocator.recordingDeps(appContext)
+
+    private fun resolvingEngine(handleAudioFocus: Boolean = true) =
+        OpenTvResolvingPlayerEngine(
+            delegate = TellyServiceLocator.tunedEngine(appContext, handleAudioFocus = handleAudioFocus),
+            resolve = ::resolveStreamUrl,
+        )
+
+    private suspend fun resolveStreamUrl(url: String): String {
+        if (!url.startsWith("stalker://")) return url
+
+        openTv.database.channels().byStreamUrl(url)?.let { channel ->
+            val source = openTv.sourceRepository.byId(channel.sourceId)
+            return openTv.catalogRepository.resolvePlaybackUrl(channel, source)
+        }
+
+        openTv.database.movies().byStreamUrl(url)?.let { movie ->
+            val source = openTv.sourceRepository.byId(movie.sourceId) ?: return movie.streamUrl
+            return openTv.catalogRepository.resolveVariantPlaybackUrl(
+                SourceVariant(
+                    sourceId = movie.sourceId,
+                    sourceName = source.name,
+                    streamId = movie.streamId,
+                    quality = movie.qualityLabel,
+                    qualityRank = movie.qualityRank,
+                    language = movie.language,
+                    codec = movie.codec,
+                    streamUrl = movie.streamUrl,
+                    userAgent = source.userAgent,
+                    cmd = movie.cmd,
+                ),
+            )
+        }
+
+        openTv.database.episodes().byStreamUrl(url)?.let { episode ->
+            val source = openTv.sourceRepository.byId(episode.sourceId) ?: return episode.streamUrl
+            return openTv.catalogRepository.resolveVariantPlaybackUrl(
+                SourceVariant(
+                    sourceId = episode.sourceId,
+                    sourceName = source.name,
+                    streamId = episode.episodeId,
+                    quality = episode.qualityLabel,
+                    qualityRank = episode.qualityRank,
+                    language = episode.language,
+                    codec = episode.codec,
+                    streamUrl = episode.streamUrl,
+                    userAgent = source.userAgent,
+                    cmd = episode.cmd,
+                ),
+            )
+        }
+
+        return url
+    }
 
     val settings: SettingsGraph =
         TellyServiceLocator.bridgedSettingsGraph(
