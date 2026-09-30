@@ -10,6 +10,7 @@ import android.view.KeyEvent
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.LinearLayout
+import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.media3.common.Player
 import androidx.media3.ui.AspectRatioFrameLayout
@@ -33,12 +34,14 @@ class NativeTvRootView(
     private val playerFrame = FrameLayout(context)
     private val playerView = PlayerView(context)
     private val shutter = View(context)
+    private val buffering = ProgressBar(context)
     private val topNav = LinearLayout(context)
     private val infoBar = LinearLayout(context)
     private val infoTitle = TextView(context)
     private val infoSubtitle = TextView(context)
     private val channelBar = NativeChannelBarView(context)
     private val groupDrawer = NativeGroupDrawerView(context)
+    private val mainMenu = NativeMainMenuView(context)
     private val quickActions = LinearLayout(context)
     private val vod = NativeVodBrowserView(context, scope, controller) { showFullscreen() }
     private val search = NativeSearchView(
@@ -70,10 +73,25 @@ class NativeTvRootView(
     private var mode = Mode.FULLSCREEN
     val isFullscreen: Boolean get() = mode == Mode.FULLSCREEN
 
-    private val hideInfo = Runnable { infoBar.fadeGone(150) }
+    private val bufferWatchdog = Runnable {
+        if (controller.player.playbackState == Player.STATE_BUFFERING) {
+            controller.resyncCurrent()
+        }
+    }
+
+    private val hideInfo = Runnable { infoBar.fadeGone(250) }
     private val hideChannelBar = Runnable {
         if (mode == Mode.CHANNEL_BAR) {
-            channelBar.fadeGone(150)
+            channelBar.animate()
+                .alpha(0f)
+                .translationY(dp(48).toFloat())
+                .setDuration(250)
+                .withEndAction {
+                    channelBar.visibility = GONE
+                    channelBar.alpha = 1f
+                    channelBar.translationY = 0f
+                }
+                .start()
             mode = Mode.FULLSCREEN
             playerView.requestFocus()
         }
@@ -109,6 +127,11 @@ class NativeTvRootView(
         playerFrame.addView(playerView, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
         shutter.setBackgroundColor(Color.BLACK)
         playerFrame.addView(shutter, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+        buffering.visibility = GONE
+        playerFrame.addView(
+            buffering,
+            LayoutParams(dp(52), dp(52), Gravity.CENTER),
+        )
         addView(playerFrame, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         buildTopNav()
@@ -122,6 +145,9 @@ class NativeTvRootView(
 
         groupDrawer.visibility = GONE
         addView(groupDrawer, LayoutParams(dp(330), LayoutParams.MATCH_PARENT, Gravity.START))
+
+        mainMenu.visibility = GONE
+        addView(mainMenu, LayoutParams(dp(290), LayoutParams.MATCH_PARENT, Gravity.START))
 
         buildQuickActions()
         addView(
@@ -147,7 +173,20 @@ class NativeTvRootView(
         addView(settingsDrawer, LayoutParams(dp(430), LayoutParams.MATCH_PARENT, Gravity.END))
 
         controller.player.addListener(object : Player.Listener {
+            override fun onPlaybackStateChanged(playbackState: Int) {
+                handler.removeCallbacks(bufferWatchdog)
+                when (playbackState) {
+                    Player.STATE_BUFFERING -> {
+                        buffering.visibility = VISIBLE
+                        handler.postDelayed(bufferWatchdog, 5_000)
+                    }
+                    Player.STATE_READY, Player.STATE_ENDED -> buffering.visibility = GONE
+                }
+            }
+
             override fun onRenderedFirstFrame() {
+                handler.removeCallbacks(bufferWatchdog)
+                buffering.visibility = GONE
                 shutter.animate().alpha(0f).setDuration(150).withEndAction {
                     shutter.visibility = GONE
                 }.start()
@@ -176,9 +215,17 @@ class NativeTvRootView(
     fun handleKey(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return false
 
-        if (mode == Mode.GROUPS) {
+        if (mode == Mode.MENU) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
-                hideGroups()
+                hideMainMenu()
+                return true
+            }
+            return false
+        }
+
+        if (mode == Mode.GROUPS) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK || event.keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+                showMainMenu()
                 return true
             }
             return false
@@ -262,7 +309,7 @@ class NativeTvRootView(
                     true
                 }
                 KeyEvent.KEYCODE_BACK -> { showGroups(); true }
-                KeyEvent.KEYCODE_MENU -> { showSettings(); true }
+                KeyEvent.KEYCODE_MENU -> { showMainMenu(); true }
                 else -> false
             }
         }
@@ -287,7 +334,7 @@ class NativeTvRootView(
                 showInfoFor(settings.lastChannelId)
                 true
             }
-            KeyEvent.KEYCODE_MENU -> { showSettings(); true }
+            KeyEvent.KEYCODE_MENU -> { showMainMenu(); true }
             else -> false
         }
     }
@@ -303,6 +350,7 @@ class NativeTvRootView(
         multiview.visibility = GONE
         settingsDrawer.visibility = GONE
         groupDrawer.visibility = GONE
+        mainMenu.visibility = GONE
         channelBar.visibility = GONE
         quickActions.visibility = GONE
     }
@@ -313,7 +361,7 @@ class NativeTvRootView(
         handler.removeCallbacks(hideInfo)
         infoBar.visibility = GONE
         hideAllSurfaces()
-        topNav.visibility = VISIBLE
+        topNav.visibility = GONE
         guide.visibility = VISIBLE
         guide.bringToFront()
         playerFrame.bringToFront()
@@ -366,6 +414,38 @@ class NativeTvRootView(
         }
     }
 
+    private fun showMainMenu() {
+        mode = Mode.MENU
+        groupDrawer.visibility = GONE
+        mainMenu.submit(
+            listOf(
+                NativeMainMenuView.Item("live", "TV Guide") { hideMainMenu(); showGuide() },
+                NativeMainMenuView.Item("movies", "Films") { hideMainMenu(); showVod(NativeVodBrowserView.Mode.MOVIES) },
+                NativeMainMenuView.Item("series", "Séries") { hideMainMenu(); showVod(NativeVodBrowserView.Mode.SERIES) },
+                NativeMainMenuView.Item("search", "Recherche") { hideMainMenu(); showSearch() },
+                NativeMainMenuView.Item("multi", "Multiview") { hideMainMenu(); showMultiview() },
+                NativeMainMenuView.Item("dvr", "Enregistrements") { hideMainMenu(); showRecordings() },
+                NativeMainMenuView.Item("settings", "Réglages") { hideMainMenu(); showSettings() },
+            ),
+        )
+        mainMenu.visibility = VISIBLE
+        mainMenu.translationX = -dp(290).toFloat()
+        mainMenu.bringToFront()
+        mainMenu.animate().translationX(0f).setDuration(180).start()
+    }
+
+    private fun hideMainMenu() {
+        mainMenu.animate()
+            .translationX(-mainMenu.width.toFloat())
+            .setDuration(160)
+            .withEndAction {
+                mainMenu.visibility = GONE
+                mode = Mode.GUIDE
+                guide.requestFocus()
+            }
+            .start()
+    }
+
     private fun showGroups() {
         if (controller.groups.isEmpty()) return
         mode = Mode.GROUPS
@@ -404,8 +484,15 @@ class NativeTvRootView(
             handler.removeCallbacks(hideChannelBar)
             handler.postDelayed(hideChannelBar, 5_000)
         }
-        channelBar.fadeVisible(150)
+        channelBar.visibility = VISIBLE
+        channelBar.alpha = 0f
+        channelBar.translationY = dp(48).toFloat()
         channelBar.bringToFront()
+        channelBar.animate()
+            .alpha(1f)
+            .translationY(0f)
+            .setDuration(250)
+            .start()
         handler.removeCallbacks(hideChannelBar)
         handler.postDelayed(hideChannelBar, 5_000)
     }
@@ -523,10 +610,10 @@ class NativeTvRootView(
             ?.title
             .orEmpty()
         infoSubtitle.text = now
-        infoBar.fadeVisible(150)
+        infoBar.fadeVisible(200)
         infoBar.bringToFront()
         handler.removeCallbacks(hideInfo)
-        handler.postDelayed(hideInfo, 3_000)
+        handler.postDelayed(hideInfo, 5_000)
     }
 
     private fun buildTopNav() {
@@ -650,5 +737,6 @@ class NativeTvRootView(
         MULTIVIEW,
         SETTINGS,
         GROUPS,
+        MENU,
     }
 }
