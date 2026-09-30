@@ -124,46 +124,48 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    suspend fun requestForChannel(channelId: Long): PlayerController.Request? {
+        val base = graph.database.channels().byId(channelId) ?: return null
+        val variants = if (base.groupKey.isBlank()) listOf(base) else {
+            graph.database.channels().variantsInGroup(base.groupKey).ifEmpty { listOf(base) }
+        }
+        val sourceVariants = variants.mapNotNull { channel ->
+            val source = graph.sourceRepository.byId(channel.sourceId) ?: return@mapNotNull null
+            SourceVariant(
+                sourceId = channel.sourceId,
+                sourceName = source.name,
+                streamId = channel.streamId,
+                quality = channel.qualityLabel,
+                qualityRank = channel.qualityRank,
+                language = null,
+                codec = null,
+                streamUrl = channel.streamUrl,
+                userAgent = source.userAgent,
+                cmd = channel.cmd,
+            )
+        }
+        val picked = QualitySelector.pick(sourceVariants, settings.qualityPreferenceOrder.value)
+            ?: sourceVariants.firstOrNull()
+            ?: return null
+        val actual = variants.firstOrNull {
+            it.sourceId == picked.sourceId && it.streamId == picked.streamId
+        } ?: base
+        val source = graph.sourceRepository.byId(actual.sourceId)
+        val url = graph.catalogRepository.resolvePlaybackUrl(actual, source)
+        return PlayerController.Request(
+            url = url,
+            title = actual.customName?.takeIf(String::isNotBlank) ?: actual.displayName,
+            userAgent = source?.userAgent ?: "",
+            isLive = true,
+        )
+    }
+
     fun tuneChannel(channelId: Long) {
         stopVodCheckpointing()
         scope.launch {
-            val base = graph.database.channels().byId(channelId) ?: return@launch
-            val variants = if (base.groupKey.isBlank()) listOf(base) else {
-                graph.database.channels().variantsInGroup(base.groupKey).ifEmpty { listOf(base) }
-            }
-            val sourceVariants = variants.mapNotNull { channel ->
-                val source = graph.sourceRepository.byId(channel.sourceId) ?: return@mapNotNull null
-                SourceVariant(
-                    sourceId = channel.sourceId,
-                    sourceName = source.name,
-                    streamId = channel.streamId,
-                    quality = channel.qualityLabel,
-                    qualityRank = channel.qualityRank,
-                    language = null,
-                    codec = null,
-                    streamUrl = channel.streamUrl,
-                    userAgent = source.userAgent,
-                    cmd = channel.cmd,
-                )
-            }
-            val picked = QualitySelector.pick(sourceVariants, settings.qualityPreferenceOrder.value)
-                ?: sourceVariants.firstOrNull()
-                ?: return@launch
-            val actual = variants.firstOrNull {
-                it.sourceId == picked.sourceId && it.streamId == picked.streamId
-            } ?: base
-            val source = graph.sourceRepository.byId(actual.sourceId)
-            val url = graph.catalogRepository.resolvePlaybackUrl(actual, source)
-            playerController.play(
-                PlayerController.Request(
-                    url = url,
-                    title = actual.customName?.takeIf(String::isNotBlank) ?: actual.displayName,
-                    userAgent = source?.userAgent ?: "",
-                    isLive = true,
-                ),
-                debounce = false,
-            )
-            settings.recordRecentChannel(base.id)
+            val request = requestForChannel(channelId) ?: return@launch
+            playerController.play(request, debounce = false)
+            settings.recordRecentChannel(channelId)
         }
     }
 
