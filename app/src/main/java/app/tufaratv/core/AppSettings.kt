@@ -306,6 +306,35 @@ class AppSettings private constructor(context: Context) {
         _languageTag.value = tag
     }
 
+    data class LastLivePlayback(
+        val channelId: Long,
+        val url: String,
+        val title: String,
+        val userAgent: String,
+    )
+
+    fun lastLivePlayback(): LastLivePlayback? {
+        val id = prefs.getLong(KEY_LAST_CHANNEL, 0L)
+        val url = prefs.getString(KEY_LAST_CHANNEL_URL, "").orEmpty()
+        if (id <= 0L || url.isBlank()) return null
+        return LastLivePlayback(
+            channelId = id,
+            url = url,
+            title = prefs.getString(KEY_LAST_CHANNEL_TITLE, "").orEmpty(),
+            userAgent = prefs.getString(KEY_LAST_CHANNEL_UA, "").orEmpty(),
+        )
+    }
+
+    fun recordLastLivePlayback(id: Long, url: String, title: String, userAgent: String) {
+        if (id <= 0L || url.isBlank()) return
+        prefs.edit()
+            .putLong(KEY_LAST_CHANNEL, id)
+            .putString(KEY_LAST_CHANNEL_URL, url)
+            .putString(KEY_LAST_CHANNEL_TITLE, title)
+            .putString(KEY_LAST_CHANNEL_UA, userAgent)
+            .apply()
+    }
+
     /** The last channel played, for boot-to-last-channel. Not a flow — only read once at launch. */
     var lastChannelId: Long
         get() = prefs.getLong(KEY_LAST_CHANNEL, 0L)
