@@ -8,7 +8,7 @@ import android.view.ViewGroup
 import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.recyclerview.widget.GridLayoutManager
+import androidx.leanback.widget.VerticalGridView
 import androidx.recyclerview.widget.RecyclerView
 import app.tufaratv.data.model.Episode
 import app.tufaratv.data.model.Movie
@@ -27,7 +27,7 @@ class NativeVodBrowserView(
 
     private val title = TextView(context)
     private val status = TextView(context)
-    private val grid = RecyclerView(context)
+    private val grid = VerticalGridView(context)
     private val adapter = VodAdapter(
         onMovie = { controller.playMovie(it); onPlayStarted() },
         onSeries = ::openSeries,
@@ -59,7 +59,7 @@ class NativeVodBrowserView(
             bottomMargin = dp(12)
         })
 
-        grid.layoutManager = GridLayoutManager(context, 6)
+        grid.setNumColumns(6)
         grid.adapter = adapter
         grid.itemAnimator = null
         grid.setHasFixedSize(true)
