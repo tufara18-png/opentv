@@ -1,6 +1,7 @@
 package app.tufaratv.ui.nativev4
 
 import android.content.Context
+import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
@@ -95,6 +96,12 @@ class NativeSettingsDrawer(
                 },
                 Entry("Reprendre la dernière chaîne", yesNo(settings.resumeLastChannel.value)) {
                     settings.setResumeLastChannel(!settings.resumeLastChannel.value); rebuild()
+                },
+                Entry("Réglages avancés", "Playlists, EPG, DVR, profils, sauvegarde…") {
+                    context.startActivity(
+                        Intent(context, TellyFeatureActivity::class.java)
+                            .putExtra(TellyFeatureActivity.EXTRA_ROUTE, "settings"),
+                    )
                 },
             ),
         )
