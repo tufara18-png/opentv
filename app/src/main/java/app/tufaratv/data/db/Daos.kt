@@ -62,6 +62,25 @@ interface SourceDao {
     suspend fun markCatalogSynced(id: Long, millis: Long)
 }
 
+data class TellyChannelRow(
+    val id: Long,
+    val sourceId: Long,
+    val displayName: String,
+    val customName: String?,
+    val categoryId: String?,
+    val logoUrl: String?,
+    val epgChannelId: String?,
+    val matchedEpgId: String?,
+    val epgOverrideId: String?,
+    val tvArchive: Boolean,
+    val tvArchiveDays: Int,
+    val number: Int?,
+    val streamUrl: String,
+    val favourite: Boolean,
+    val hidden: Boolean,
+    val sortIndex: Int,
+)
+
 @Dao
 interface ChannelDao {
     @Query(
@@ -209,23 +228,32 @@ interface ChannelDao {
 
     @Query(
         """
-        SELECT * FROM channels
+        SELECT id, sourceId, displayName, customName, categoryId, logoUrl,
+               epgChannelId, matchedEpgId, epgOverrideId, tvArchive, tvArchiveDays,
+               number, streamUrl, favourite, hidden, sortIndex
+        FROM channels
         WHERE hidden = 0 AND sourceId = :sourceId
         ORDER BY sortIndex, displayName
         """
     )
-    fun observeForSource(sourceId: Long): Flow<List<Channel>>
+    fun observeForSourceTelly(sourceId: Long): Flow<List<TellyChannelRow>>
 
     @Query(
         """
-        SELECT * FROM channels
+        SELECT id, sourceId, displayName, customName, categoryId, logoUrl,
+               epgChannelId, matchedEpgId, epgOverrideId, tvArchive, tvArchiveDays,
+               number, streamUrl, favourite, hidden, sortIndex
+        FROM channels
         WHERE hidden = 0
           AND sourceId = :sourceId
           AND categoryId IN (:categoryIds)
         ORDER BY sortIndex, displayName
         """
     )
-    fun observeInCategoriesForSource(sourceId: Long, categoryIds: List<String>): Flow<List<Channel>>
+    fun observeInCategoriesForSourceTelly(
+        sourceId: Long,
+        categoryIds: List<String>,
+    ): Flow<List<TellyChannelRow>>
 
     @Query("SELECT * FROM channels WHERE id = :id")
     fun observeById(id: Long): Flow<Channel?>
@@ -250,7 +278,10 @@ interface ChannelDao {
 
     @Query(
         """
-        SELECT c.* FROM channels c
+        SELECT c.id, c.sourceId, c.displayName, c.customName, c.categoryId, c.logoUrl,
+               c.epgChannelId, c.matchedEpgId, c.epgOverrideId, c.tvArchive, c.tvArchiveDays,
+               c.number, c.streamUrl, c.favourite, c.hidden, c.sortIndex
+        FROM channels c
         WHERE c.hidden = 0
           AND (
             c.groupKey = ''
@@ -267,7 +298,7 @@ interface ChannelDao {
         ORDER BY c.sortIndex, c.displayName
         """
     )
-    suspend fun visibleLogicalSnapshot(): List<Channel>
+    suspend fun visibleLogicalSnapshot(): List<TellyChannelRow>
 
     @Query(
         """
