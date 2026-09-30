@@ -24,6 +24,8 @@ class GuideCanvasView(context: Context) : View(context) {
     private var channels: List<TellyChannelRow> = emptyList()
     private var programmes: Map<String, List<Programme>> = emptyMap()
 
+    var onRowFocusChanged: ((Int) -> Unit)? = null
+
     private var selectedRow = 0
     private var firstVisibleRow = 0
     private var focusTimeMillis = System.currentTimeMillis()
@@ -80,6 +82,12 @@ class GuideCanvasView(context: Context) : View(context) {
         selectedRow = rows.indexOfFirst { it.id == currentChannelId }.takeIf { it >= 0 } ?: 0
         ensureVerticalWindow()
         focusTimeMillis = System.currentTimeMillis()
+        onRowFocusChanged?.invoke(selectedRow)
+        invalidate()
+    }
+
+    fun updateProgrammes(programmeMap: Map<String, List<Programme>>) {
+        programmes = programmeMap.mapValues { (_, value) -> value.sortedBy { it.startUtcMillis } }
         invalidate()
     }
 
@@ -87,6 +95,7 @@ class GuideCanvasView(context: Context) : View(context) {
         if (channels.isEmpty()) return
         selectedRow = (selectedRow + delta).coerceIn(0, channels.lastIndex)
         ensureVerticalWindow()
+        onRowFocusChanged?.invoke(selectedRow)
         invalidate()
     }
 
