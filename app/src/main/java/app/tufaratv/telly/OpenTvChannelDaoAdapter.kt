@@ -8,6 +8,7 @@ package app.tufaratv.telly
 
 import app.tufaratv.data.db.CategoryDao as OpenTvCategoryDao
 import app.tufaratv.data.db.ChannelDao as OpenTvChannelDao
+import app.tufaratv.data.db.TellyChannelRow
 import app.tufaratv.data.model.Channel as OpenTvChannel
 import app.tufaratv.data.model.StreamKind
 import app.tufaratv.data.model.shownName
@@ -59,7 +60,7 @@ class OpenTvChannelDaoAdapter(
             .stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     override fun observeForPlaylist(playlistId: Long): Flow<List<ChannelEntity>> =
-        channels.observeForSource(playlistId)
+        channels.observeForSourceTelly(playlistId)
             .combine(categories.observe(StreamKind.LIVE)) { rows, groups ->
                 val names = groups
                     .asSequence()
@@ -82,7 +83,7 @@ class OpenTvChannelDaoAdapter(
                 if (ids.isEmpty()) {
                     flowOf(emptyList())
                 } else {
-                    channels.observeInCategoriesForSource(playlistId, ids)
+                    channels.observeInCategoriesForSourceTelly(playlistId, ids)
                         .map { rows -> rows.map { it.toTellyChannel(groupTitle) } }
                 }
             }
@@ -155,6 +156,9 @@ class OpenTvChannelDaoAdapter(
     private fun OpenTvChannel.toTelly(categoryNames: Map<String, String> = emptyMap()): ChannelEntity =
         toTellyChannel(categoryId?.let { categoryNames[categoryKey(sourceId, it)] ?: it })
 
+    private fun TellyChannelRow.toTelly(categoryNames: Map<String, String> = emptyMap()): ChannelEntity =
+        toTellyChannel(categoryId?.let { categoryNames[categoryKey(sourceId, it)] ?: it })
+
     private fun readOnly(): Nothing =
         error("OpenTV owns channel writes; Telly is connected as a frontend")
 
@@ -204,4 +208,35 @@ internal fun Flow<Int>.coalescedCatalogueCounts(delayMillis: Long = 5_000L): Flo
             emit(count)
         }
     }
+}
+
+
+internal fun TellyChannelRow.toTellyChannel(groupTitle: String? = categoryId): ChannelEntity {
+    val effectiveTvgId = epgOverrideId ?: matchedEpgId ?: epgChannelId
+    val shownName = customName?.takeIf { it.isNotBlank() } ?: displayName
+    return ChannelEntity(
+        id = id,
+        playlistId = sourceId,
+        number = number ?: (sortIndex + 1),
+        sortIndex = sortIndex,
+        source = ChannelSource(
+            name = shownName,
+            groupTitle = groupTitle,
+            logoUrl = logoUrl,
+            streamUrl = streamUrl,
+            tvgId = effectiveTvgId,
+        ),
+        flags = ChannelFlags(
+            favorite = favourite,
+            hidden = hidden,
+        ),
+        catchup = ChannelCatchup(
+            catchupType = if (tvArchive) "xtream-codes" else null,
+            catchupDays = tvArchiveDays.takeIf { it > 0 },
+        ),
+        overrides = ChannelOverrides(
+            customName = customName,
+            epgOverride = epgOverrideId,
+        ),
+    )
 }
