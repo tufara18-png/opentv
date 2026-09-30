@@ -437,12 +437,13 @@ class PlayerController(
         const val PREVIEW_BUFFER_AFTER_REBUFFER_MILLIS = 1_500
         const val PREVIEW_SWITCH_DEBOUNCE_MILLIS = 700L
 
-        // One balanced buffer for preview -> full-screen hand-off: quick first frame, enough
-        // headroom for IPTV jitter, and bounded memory on inexpensive TV devices.
-        const val SHARED_LIVE_MIN_BUFFER_MILLIS = 5_000
-        const val SHARED_LIVE_MAX_BUFFER_MILLIS = 30_000
-        const val SHARED_LIVE_BUFFER_FOR_PLAYBACK_MILLIS = 1_000
-        const val SHARED_LIVE_BUFFER_AFTER_REBUFFER_MILLIS = 2_500
+        // Native-TV live profile: prioritize first-frame/zap latency and cap forward-buffer RAM.
+        // The same player remains attached while guide/OSD overlays open, so there is no second
+        // preview player competing for codec or heap.
+        const val SHARED_LIVE_MIN_BUFFER_MILLIS = 1_000
+        const val SHARED_LIVE_MAX_BUFFER_MILLIS = 2_500
+        const val SHARED_LIVE_BUFFER_FOR_PLAYBACK_MILLIS = 500
+        const val SHARED_LIVE_BUFFER_AFTER_REBUFFER_MILLIS = 1_000
         const val SHARED_LIVE_BACK_BUFFER_MILLIS = 60_000
 
         const val LIVE_TARGET_OFFSET_MILLIS = 10_000L
