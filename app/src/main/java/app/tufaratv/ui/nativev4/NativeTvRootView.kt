@@ -79,6 +79,25 @@ class NativeTvRootView(
         }
     }
 
+    private var centerPressed = false
+    private var centerLongTriggered = false
+    private var downPressed = false
+    private var downLongTriggered = false
+
+    private val centerLongPress = Runnable {
+        if (centerPressed && mode == Mode.FULLSCREEN) {
+            centerLongTriggered = true
+            showQuickActions()
+        }
+    }
+
+    private val downLongPress = Runnable {
+        if (downPressed && mode == Mode.FULLSCREEN) {
+            downLongTriggered = true
+            showRecentChannels()
+        }
+    }
+
     private val hideInfo = Runnable { infoBar.fadeGone(250) }
     private val hideChannelBar = Runnable {
         if (mode == Mode.CHANNEL_BAR) {
@@ -213,7 +232,60 @@ class NativeTvRootView(
     }
 
     fun handleKey(event: KeyEvent): Boolean {
+        // Distinguish short/long presses before dispatching to overlays. Doing the short action on
+        // ACTION_DOWN makes a long press impossible because the first repeat arrives after the UI
+        // has already changed state.
+        if (mode == Mode.FULLSCREEN && event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0) {
+                        centerPressed = true
+                        centerLongTriggered = false
+                        handler.removeCallbacks(centerLongPress)
+                        handler.postDelayed(centerLongPress, 500)
+                    }
+                    return true
+                }
+                KeyEvent.ACTION_UP -> {
+                    handler.removeCallbacks(centerLongPress)
+                    centerPressed = false
+                    if (!centerLongTriggered) showChannelBar()
+                    centerLongTriggered = false
+                    return true
+                }
+            }
+        }
+
+        if (mode == Mode.FULLSCREEN && event.keyCode == KeyEvent.KEYCODE_DPAD_DOWN) {
+            when (event.action) {
+                KeyEvent.ACTION_DOWN -> {
+                    if (event.repeatCount == 0) {
+                        downPressed = true
+                        downLongTriggered = false
+                        handler.removeCallbacks(downLongPress)
+                        handler.postDelayed(downLongPress, 500)
+                    }
+                    return true
+                }
+                KeyEvent.ACTION_UP -> {
+                    handler.removeCallbacks(downLongPress)
+                    downPressed = false
+                    if (!downLongTriggered) controller.zap(+1)
+                    downLongTriggered = false
+                    return true
+                }
+            }
+        }
+
         if (event.action != KeyEvent.ACTION_DOWN) return false
+
+        if (event.keyCode == KeyEvent.KEYCODE_BACK &&
+            (event.repeatCount > 0 || event.isLongPress) &&
+            mode in setOf(Mode.MENU, Mode.GROUPS, Mode.SETTINGS, Mode.CHANNEL_BAR, Mode.QUICK)
+        ) {
+            closeOverlayImmediately()
+            return true
+        }
 
         if (mode == Mode.MENU) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
@@ -314,19 +386,14 @@ class NativeTvRootView(
             }
         }
 
-        if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER && event.repeatCount == 1) {
-            showQuickActions()
-            return true
-        }
-
         return when (event.keyCode) {
             KeyEvent.KEYCODE_BACK -> { showGuide(preserveAudio = true); true }
-            KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showChannelBar(); true }
+            KeyEvent.KEYCODE_ENTER -> { showChannelBar(); true }
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
                 controller.zap(-1)
                 true
             }
-            KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
+            KeyEvent.KEYCODE_CHANNEL_DOWN -> {
                 controller.zap(+1)
                 true
             }
@@ -337,6 +404,33 @@ class NativeTvRootView(
             KeyEvent.KEYCODE_MENU -> { showMainMenu(); true }
             else -> false
         }
+    }
+
+    private fun closeOverlayImmediately() {
+        handler.removeCallbacks(centerLongPress)
+        handler.removeCallbacks(downLongPress)
+        handler.removeCallbacks(hideChannelBar)
+        handler.removeCallbacks(hideQuick)
+        mainMenu.animate().cancel()
+        groupDrawer.animate().cancel()
+        settingsDrawer.animate().cancel()
+        channelBar.animate().cancel()
+        quickActions.animate().cancel()
+        mainMenu.visibility = GONE
+        groupDrawer.visibility = GONE
+        settingsDrawer.visibility = GONE
+        channelBar.visibility = GONE
+        quickActions.visibility = GONE
+        mode = Mode.FULLSCREEN
+        controller.player.volume = 1f
+        playerFrame.scaleX = 1f
+        playerFrame.scaleY = 1f
+        playerFrame.translationX = 0f
+        playerFrame.translationY = 0f
+        guide.visibility = GONE
+        playerFrame.bringToFront()
+        infoBar.bringToFront()
+        playerView.requestFocus()
     }
 
     private fun exitMultiviewIfNeeded() {
@@ -501,6 +595,35 @@ class NativeTvRootView(
             .start()
         handler.removeCallbacks(hideChannelBar)
         handler.postDelayed(hideChannelBar, 5_000)
+    }
+
+    private fun showRecentChannels() {
+        mode = Mode.CHANNEL_BAR
+        scope.launch {
+            val recent = controller.recentChannels()
+            if (recent.isEmpty()) {
+                mode = Mode.FULLSCREEN
+                playerView.requestFocus()
+                return@launch
+            }
+            channelBar.submit(recent, settings.lastChannelId) { id ->
+                controller.tuneChannel(id)
+                showInfoFor(id)
+                handler.removeCallbacks(hideChannelBar)
+                handler.postDelayed(hideChannelBar, 5_000)
+            }
+            channelBar.visibility = VISIBLE
+            channelBar.alpha = 0f
+            channelBar.translationY = dp(48).toFloat()
+            channelBar.bringToFront()
+            channelBar.animate()
+                .alpha(1f)
+                .translationY(0f)
+                .setDuration(250)
+                .start()
+            handler.removeCallbacks(hideChannelBar)
+            handler.postDelayed(hideChannelBar, 5_000)
+        }
     }
 
     private fun showQuickActions() {
@@ -701,6 +824,8 @@ class NativeTvRootView(
         }
 
     override fun onDetachedFromWindow() {
+        handler.removeCallbacks(centerLongPress)
+        handler.removeCallbacks(downLongPress)
         handler.removeCallbacksAndMessages(null)
         controller.checkpointVod()
         super.onDetachedFromWindow()
