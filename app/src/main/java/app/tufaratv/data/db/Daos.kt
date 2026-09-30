@@ -278,6 +278,18 @@ interface ChannelDao {
 
     @Query(
         """
+        SELECT id, sourceId, displayName, customName, categoryId, logoUrl,
+               epgChannelId, matchedEpgId, epgOverrideId, tvArchive, tvArchiveDays,
+               number, streamUrl, favourite, hidden, sortIndex
+        FROM channels
+        WHERE hidden = 0
+        ORDER BY sortIndex, displayName
+        """
+    )
+    suspend fun visibleSnapshot(): List<TellyChannelRow>
+
+    @Query(
+        """
         SELECT c.id, c.sourceId, c.displayName, c.customName, c.categoryId, c.logoUrl,
                c.epgChannelId, c.matchedEpgId, c.epgOverrideId, c.tvArchive, c.tvArchiveDays,
                c.number, c.streamUrl, c.favourite, c.hidden, c.sortIndex
