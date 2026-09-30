@@ -74,6 +74,12 @@ class NativeTvRootView(
         isFocusable = true
 
         guide.visibility = GONE
+        guide.onRowFocusChanged = { rowIndex ->
+            controller.loadEpgSegment(rowIndex) { updated ->
+                programMap = updated
+                guide.updateProgrammes(updated)
+            }
+        }
         addView(guide, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         playerView.apply {
