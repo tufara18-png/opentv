@@ -11,6 +11,8 @@ val filteredTellySources = layout.buildDirectory.dir("generated/tellySources")
 val syncTellySources by tasks.registering(Sync::class) {
     from(rootProject.file("telly/app/src/main/java")) {
         exclude("com/johncorser/telly/features/playback/TuneController.kt")
+        exclude("com/johncorser/telly/RootScreenRoutes.kt")
+        exclude("com/johncorser/telly/features/playback/PlaybackScreen.kt")
         exclude("com/johncorser/telly/features/playback/RecentRowFeed.kt")
         exclude("com/johncorser/telly/features/vod/VodPlaybackViewModel.kt")
         exclude("com/johncorser/telly/features/multiview/MultiviewPanes.kt")
