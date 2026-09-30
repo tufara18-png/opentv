@@ -45,27 +45,46 @@ jobs:
           test ! -e tellyFrontend
           test ! -e .gitmodules
 
-      - name: Unit tests
-        run: ./gradlew testDebugUnitTest --stacktrace
+      - name: Verify release runtime is Compose-free
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./gradlew app:dependencies --configuration releaseRuntimeClasspath > release-runtime-deps.txt
+          if grep -Ei 'androidx[.-]compose|activity-compose|navigation-compose|coil-compose|telly' release-runtime-deps.txt; then
+            echo "Compose/Telly dependency found in release runtime."
+            exit 1
+          fi
 
-      - name: Assemble debug APK
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Test release variant
+        run: ./gradlew testReleaseUnitTest --stacktrace
 
-      - name: Assemble release performance APK
+      - name: Assemble optimized R8 release APK
         run: ./gradlew assembleRelease --stacktrace
 
-      - name: Upload debug APK
+      - name: Verify optimized release output
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s app/build/outputs/apk/release/app-release.apk
+          test -s app/build/outputs/mapping/release/mapping.txt
+          if grep -R -n 'android:debuggable="true"' app/build/intermediates/merged_manifests/release 2>/dev/null; then
+            echo "Release manifest is debuggable."
+            exit 1
+          fi
+          echo "R8 mapping present and release APK is non-debuggable."
+
+      - name: Upload R8 release APK
         uses: actions/upload-artifact@v4
         with:
-          name: tufaratv-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: tufaratv-release-r8-apk
+          path: app/build/outputs/apk/release/app-release.apk
           if-no-files-found: error
 
-      - name: Upload release performance APK
+      - name: Upload R8 mapping
         uses: actions/upload-artifact@v4
         with:
-          name: tufaratv-release-perf-apk
-          path: app/build/outputs/apk/release/*.apk
+          name: tufaratv-release-r8-mapping
+          path: app/build/outputs/mapping/release/mapping.txt
           if-no-files-found: error
 
       - name: Upload test reports
