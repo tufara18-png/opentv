@@ -4,6 +4,8 @@ import android.content.Context
 import app.tufaratv.core.ServiceLocator
 import app.tufaratv.data.db.TellyChannelRow
 import app.tufaratv.data.model.Movie
+import app.tufaratv.data.model.Category
+import app.tufaratv.data.model.StreamKind
 import app.tufaratv.data.model.PlaybackPosition
 import app.tufaratv.data.model.Programme
 import app.tufaratv.data.model.Series
@@ -41,6 +43,10 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         private set
     var programmes: Map<String, List<Programme>> = emptyMap()
         private set
+    var groups: List<Category> = emptyList()
+        private set
+    var currentGroup: Category? = null
+        private set
 
     private val epgSegments = LinkedHashMap<Int, Map<String, List<Programme>>>()
     private val epgLoadingSegments = mutableSetOf<Int>()
@@ -59,15 +65,35 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
                 ?: graph.database.channels().firstVisibleTelly()?.id
             if (startupId != null) tuneChannelNow(startupId)
 
-            val rows = if (settings.deduplicateChannels.value) {
-                graph.database.channels().visibleLogicalSnapshot()
+            val startupChannel = startupId?.let { graph.database.channels().byId(it) }
+            val sourceId = startupChannel?.sourceId
+                ?: graph.sourceRepository.enabled().firstOrNull()?.id
+
+            groups = if (sourceId != null) {
+                graph.database.categories().allByKind(StreamKind.LIVE)
+                    .filter { it.sourceId == sourceId }
             } else {
-                graph.database.channels().visibleSnapshot()
+                emptyList()
+            }
+            currentGroup = groups.firstOrNull { it.id == startupChannel?.categoryId }
+                ?: groups.firstOrNull()
+
+            val rows = when {
+                sourceId == null -> emptyList()
+                currentGroup != null && settings.deduplicateChannels.value ->
+                    graph.database.channels().visibleLogicalSnapshotInCategory(sourceId, currentGroup!!.id)
+                currentGroup != null ->
+                    graph.database.channels().visibleSnapshotInCategory(sourceId, currentGroup!!.id)
+                settings.deduplicateChannels.value ->
+                    graph.database.channels().visibleLogicalSnapshotForSource(sourceId)
+                else ->
+                    graph.database.channels().visibleSnapshotForSource(sourceId)
             }
             channels = rows
             val preferred = startupId?.takeIf { id -> rows.any { it.id == id } }
                 ?: rows.firstOrNull()?.id
             val center = rows.indexOfFirst { it.id == preferred }.coerceAtLeast(0)
+            resetEpgCache()
             loadEpgSegmentInternal(center)
             onReady(rows, programmes)
         }
@@ -75,6 +101,28 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
 
     fun refreshGuide(onReady: (List<TellyChannelRow>, Map<String, List<Programme>>) -> Unit) =
         loadGuide(onReady)
+
+    fun loadGroup(group: Category, onReady: (List<TellyChannelRow>, Map<String, List<Programme>>) -> Unit) {
+        scope.launch {
+            currentGroup = group
+            val rows = if (settings.deduplicateChannels.value) {
+                graph.database.channels().visibleLogicalSnapshotInCategory(group.sourceId, group.id)
+            } else {
+                graph.database.channels().visibleSnapshotInCategory(group.sourceId, group.id)
+            }
+            channels = rows
+            resetEpgCache()
+            if (rows.isNotEmpty()) loadEpgSegmentInternal(0)
+            onReady(rows, programmes)
+        }
+    }
+
+    private fun resetEpgCache() {
+        epgSegments.clear()
+        epgLoadingSegments.clear()
+        programmes = emptyMap()
+        epgCacheLoadedAt = 0L
+    }
 
     fun loadEpgSegment(centerRow: Int, onReady: (Map<String, List<Programme>>) -> Unit) {
         val segment = centerRow.coerceAtLeast(0) / EPG_SEGMENT_SIZE
