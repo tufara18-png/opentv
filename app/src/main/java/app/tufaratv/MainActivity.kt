@@ -27,7 +27,6 @@ import com.johncorser.telly.features.pip.PipActivityBridge
 import com.johncorser.telly.features.pip.PipState
 import com.johncorser.telly.features.playback.TuneController
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -96,7 +95,7 @@ class MainActivity : ComponentActivity() {
     }
 
     private suspend fun watchForFirstSource() {
-        while (isActive && nativeRoot == null) {
+        while (nativeRoot == null) {
             if (catalogueReady()) {
                 mountNativeTv()
                 return
