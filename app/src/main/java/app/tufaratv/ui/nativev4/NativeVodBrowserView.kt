@@ -26,6 +26,7 @@ class NativeVodBrowserView(
     enum class Mode { MOVIES, SERIES }
 
     private val title = TextView(context)
+    private val status = TextView(context)
     private val grid = RecyclerView(context)
     private val adapter = VodAdapter(
         onMovie = { controller.playMovie(it); onPlayStarted() },
@@ -46,7 +47,16 @@ class NativeVodBrowserView(
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         addView(title, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
-            bottomMargin = dp(20)
+            bottomMargin = dp(10)
+        })
+
+        status.apply {
+            textSize = 16f
+            setTextColor(0xFF94A3B8.toInt())
+            visibility = GONE
+        }
+        addView(status, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply {
+            bottomMargin = dp(12)
         })
 
         grid.layoutManager = GridLayoutManager(context, 6)
@@ -61,14 +71,33 @@ class NativeVodBrowserView(
         this.mode = mode
         activeSeries = null
         title.text = if (mode == Mode.MOVIES) "Films" else "Séries"
+        showLoading("Chargement…")
         scope.launch {
             val items = if (mode == Mode.MOVIES) {
-                controller.movies().map(VodItem::MovieItem)
+                controller.movies { count ->
+                    post { showLoading("Chargement… $count films") }
+                }.map(VodItem::MovieItem)
             } else {
-                controller.series().map(VodItem::SeriesItem)
+                controller.series { count ->
+                    post { showLoading("Chargement… $count séries") }
+                }.map(VodItem::SeriesItem)
             }
-            adapter.submit(items)
-            post { grid.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
+            post {
+                adapter.submit(items)
+                if (items.isEmpty()) {
+                    grid.visibility = GONE
+                    status.visibility = VISIBLE
+                    status.text = if (mode == Mode.MOVIES) {
+                        "Aucun film reçu du fournisseur."
+                    } else {
+                        "Aucune série reçue du fournisseur."
+                    }
+                } else {
+                    status.visibility = GONE
+                    grid.visibility = VISIBLE
+                    grid.post { grid.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
+                }
+            }
         }
     }
 
@@ -82,10 +111,28 @@ class NativeVodBrowserView(
     private fun openSeries(series: Series) {
         activeSeries = series
         title.text = series.name
+        showLoading("Chargement des épisodes…")
         scope.launch {
-            adapter.submit(controller.episodes(series).map(VodItem::EpisodeItem))
-            post { grid.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
+            val episodes = controller.episodes(series).map(VodItem::EpisodeItem)
+            post {
+                adapter.submit(episodes)
+                if (episodes.isEmpty()) {
+                    grid.visibility = GONE
+                    status.visibility = VISIBLE
+                    status.text = "Aucun épisode reçu du fournisseur."
+                } else {
+                    status.visibility = GONE
+                    grid.visibility = VISIBLE
+                    grid.post { grid.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
+                }
+            }
         }
+    }
+
+    private fun showLoading(message: String) {
+        status.text = message
+        status.visibility = VISIBLE
+        grid.visibility = GONE
     }
 
     private sealed interface VodItem {
