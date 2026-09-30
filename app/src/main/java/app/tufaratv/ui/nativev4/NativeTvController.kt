@@ -52,18 +52,24 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
 
     fun loadGuide(onReady: (List<TellyChannelRow>, Map<String, List<Programme>>) -> Unit) {
         scope.launch {
+            // Start playback from one indexed row before materialising the guide. The TV should
+            // show the last channel immediately while the large catalogue is prepared off-screen.
+            val savedId = settings.lastChannelId.takeIf { it > 0L }
+            val startupId = savedId?.takeIf { graph.database.channels().byId(it) != null }
+                ?: graph.database.channels().firstVisibleTelly()?.id
+            if (startupId != null) tuneChannelNow(startupId)
+
             val rows = if (settings.deduplicateChannels.value) {
                 graph.database.channels().visibleLogicalSnapshot()
             } else {
                 graph.database.channels().visibleSnapshot()
             }
             channels = rows
-            val preferred = settings.lastChannelId.takeIf { id -> rows.any { it.id == id } }
+            val preferred = startupId?.takeIf { id -> rows.any { it.id == id } }
                 ?: rows.firstOrNull()?.id
             val center = rows.indexOfFirst { it.id == preferred }.coerceAtLeast(0)
             loadEpgSegmentInternal(center)
             onReady(rows, programmes)
-            preferred?.let(::tuneChannel)
         }
     }
 
@@ -160,13 +166,16 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         )
     }
 
-    fun tuneChannel(channelId: Long) {
+    private suspend fun tuneChannelNow(channelId: Long): Boolean {
         stopVodCheckpointing()
-        scope.launch {
-            val request = requestForChannel(channelId) ?: return@launch
-            playerController.play(request, debounce = false)
-            settings.recordRecentChannel(channelId)
-        }
+        val request = requestForChannel(channelId) ?: return false
+        playerController.play(request, debounce = false)
+        settings.recordRecentChannel(channelId)
+        return true
+    }
+
+    fun tuneChannel(channelId: Long) {
+        scope.launch { tuneChannelNow(channelId) }
     }
 
     fun zap(delta: Int) {
@@ -230,8 +239,18 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun movies(onProgress: ((Int) -> Unit)? = null): List<Movie> {
-        if (graph.database.movies().count() == 0) {
+    fun loadMovies(
+        onProgress: (Int) -> Unit = {},
+        onUpdate: (List<Movie>, Boolean) -> Unit,
+    ) {
+        scope.launch {
+            val cached = graph.database.movies().all()
+            if (cached.isNotEmpty()) {
+                onUpdate(cached, false)
+                return@launch
+            }
+
+            var lastEmitAt = 0L
             val now = System.currentTimeMillis()
             graph.sourceRepository.enabled().forEach { source ->
                 graph.catalogRepository.syncVod(
@@ -239,15 +258,35 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
                     nowUtcMillis = now,
                     includeMovies = true,
                     includeSeries = false,
-                    onProgress = { movies, _ -> onProgress?.invoke(movies) },
+                    onProgress = { movieCount, _ ->
+                        onProgress(movieCount)
+                        val at = android.os.SystemClock.elapsedRealtime()
+                        if (at - lastEmitAt >= 650L) {
+                            lastEmitAt = at
+                            scope.launch {
+                                val partial = graph.database.movies().all()
+                                if (partial.isNotEmpty()) onUpdate(partial, true)
+                            }
+                        }
+                    },
                 )
             }
+            onUpdate(graph.database.movies().all(), false)
         }
-        return graph.database.movies().all()
     }
 
-    suspend fun series(onProgress: ((Int) -> Unit)? = null): List<Series> {
-        if (graph.database.series().count() == 0) {
+    fun loadSeries(
+        onProgress: (Int) -> Unit = {},
+        onUpdate: (List<Series>, Boolean) -> Unit,
+    ) {
+        scope.launch {
+            val cached = graph.database.series().all()
+            if (cached.isNotEmpty()) {
+                onUpdate(cached, false)
+                return@launch
+            }
+
+            var lastEmitAt = 0L
             val now = System.currentTimeMillis()
             graph.sourceRepository.enabled().forEach { source ->
                 graph.catalogRepository.syncVod(
@@ -255,11 +294,21 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
                     nowUtcMillis = now,
                     includeMovies = false,
                     includeSeries = true,
-                    onProgress = { _, series -> onProgress?.invoke(series) },
+                    onProgress = { _, seriesCount ->
+                        onProgress(seriesCount)
+                        val at = android.os.SystemClock.elapsedRealtime()
+                        if (at - lastEmitAt >= 650L) {
+                            lastEmitAt = at
+                            scope.launch {
+                                val partial = graph.database.series().all()
+                                if (partial.isNotEmpty()) onUpdate(partial, true)
+                            }
+                        }
+                    },
                 )
             }
+            onUpdate(graph.database.series().all(), false)
         }
-        return graph.database.series().all()
     }
 
     suspend fun episodes(series: Series): List<app.tufaratv.data.model.Episode> {
