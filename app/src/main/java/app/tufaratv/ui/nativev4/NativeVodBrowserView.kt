@@ -72,36 +72,41 @@ class NativeVodBrowserView(
         activeSeries = null
         title.text = if (mode == Mode.MOVIES) "Films" else "Séries"
         showLoading("Chargement…")
-        scope.launch {
-            val items = if (mode == Mode.MOVIES) {
-                controller.movies { count ->
-                    post { showLoading("Chargement… $count films") }
-                }.map(VodItem::MovieItem)
-            } else {
-                controller.series { count ->
-                    post { showLoading("Chargement… $count séries") }
-                }.map(VodItem::SeriesItem)
-            }
-            post {
-                adapter.submit(items)
-                if (items.isEmpty()) {
-                    grid.visibility = GONE
-                    status.visibility = VISIBLE
-                    status.text = if (mode == Mode.MOVIES) {
-                        "Aucun film reçu du fournisseur."
-                    } else {
-                        "Aucune série reçue du fournisseur."
-                    }
-                } else {
-                    status.visibility = GONE
-                    grid.visibility = VISIBLE
-                    grid.post { grid.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus() }
-                }
-            }
+        if (mode == Mode.MOVIES) {
+            controller.loadMovies(
+                onProgress = { count -> post { status.text = "Chargement… $count films" } },
+                onUpdate = { movies, loading ->
+                    post { renderItems(movies.map(VodItem::MovieItem), loading, "Aucun film reçu du fournisseur.") }
+                },
+            )
+        } else {
+            controller.loadSeries(
+                onProgress = { count -> post { status.text = "Chargement… $count séries" } },
+                onUpdate = { series, loading ->
+                    post { renderItems(series.map(VodItem::SeriesItem), loading, "Aucune série reçue du fournisseur.") }
+                },
+            )
         }
     }
 
     fun showSeriesDetail(series: Series) = openSeries(series)
+
+    private fun renderItems(items: List<VodItem>, loading: Boolean, emptyMessage: String) {
+        adapter.submit(items)
+        if (items.isEmpty()) {
+            grid.visibility = GONE
+            status.visibility = VISIBLE
+            status.text = if (loading) "Chargement…" else emptyMessage
+            return
+        }
+
+        grid.visibility = VISIBLE
+        status.visibility = if (loading) VISIBLE else GONE
+        if (loading) status.text = "Mise à jour du catalogue…"
+        grid.post {
+            if (!grid.hasFocus()) grid.findViewHolderForAdapterPosition(0)?.itemView?.requestFocus()
+        }
+    }
 
     fun handleBack(): Boolean {
         val series = activeSeries ?: return false
