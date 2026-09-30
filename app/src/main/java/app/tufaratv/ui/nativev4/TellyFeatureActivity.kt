@@ -19,6 +19,7 @@ class TellyFeatureActivity : ComponentActivity() {
             "search" -> Route.Search
             "multiview" -> Route.Multiview
             "recordings" -> Route.Recordings
+            "settings" -> Route.Settings
             "history" -> Route.History
             "mylist" -> Route.MyList
             else -> Route.Search
