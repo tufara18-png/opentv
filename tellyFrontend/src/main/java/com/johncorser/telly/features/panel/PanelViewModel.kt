@@ -42,7 +42,7 @@ class PanelViewModel(
     private val custom = hooks.customGroups.stateIn(scope, SharingStarted.Eagerly, emptyList())
     private val channelIndex =
         combine(channels, custom) { list, customList -> PanelChannelIndex.build(list, customList) }
-            .stateIn(scope, SharingStarted.Eagerly, PanelChannelIndex.EMPTY)
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), PanelChannelIndex.EMPTY)
     private val selected = MutableStateFlow(ALL_CHANNELS)
     private val instant = MutableStateFlow(clock())
     private val mutableFocusIndex = MutableStateFlow(0)
@@ -68,7 +68,7 @@ class PanelViewModel(
     val groups: StateFlow<List<String>> =
         channelIndex
             .map { it.groupNames }
-            .stateIn(scope, SharingStarted.Eagerly, PanelRows.groupNames(emptyList()))
+            .stateIn(scope, SharingStarted.WhileSubscribed(5_000), PanelRows.groupNames(emptyList()))
 
     @OptIn(ExperimentalCoroutinesApi::class)
     val rows: StateFlow<List<PanelRow>> =
@@ -89,7 +89,7 @@ class PanelViewModel(
             epgRepository
                 .nowNext(ids, request.at)
                 .map { guide -> PanelRows.build(request.channels, request.group, guide, request.at, style) }
-        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+        }.stateIn(scope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** The airing programme title of a row — the channel menu's blue header. */
     fun nowTitleOf(channelId: Long): String? = rows.value.firstOrNull { it.channel.id == channelId }?.nowTitle
