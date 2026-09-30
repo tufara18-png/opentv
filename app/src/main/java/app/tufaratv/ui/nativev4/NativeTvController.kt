@@ -1,6 +1,7 @@
 package app.tufaratv.ui.nativev4
 
 import android.content.Context
+import androidx.media3.common.Player
 import app.tufaratv.core.ServiceLocator
 import app.tufaratv.data.db.TellyChannelRow
 import app.tufaratv.data.model.Movie
@@ -76,7 +77,19 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
             val savedId = settings.lastChannelId.takeIf { it > 0L }
             val startupId = savedId?.takeIf { graph.database.channels().byId(it) != null }
                 ?: graph.database.channels().firstVisibleTelly()?.id
-            if (cachedPlayback == null && startupId != null) tuneChannelNow(startupId)
+            if (cachedPlayback == null && startupId != null) {
+                tuneChannelNow(startupId)
+            } else if (cachedPlayback != null && startupId != null) {
+                // Cached URLs make cold start instant for normal Xtream/M3U streams, but Stalker
+                // links and some panel URLs expire. Give the cached stream a brief head start;
+                // if Media3 has not reached READY, resolve a fresh URL from the canonical channel.
+                scope.launch {
+                    delay(2_500)
+                    if (player.playbackState != Player.STATE_READY) {
+                        tuneChannelNow(startupId)
+                    }
+                }
+            }
 
             val startupChannel = startupId?.let { graph.database.channels().byId(it) }
             val sourceId = startupChannel?.sourceId
