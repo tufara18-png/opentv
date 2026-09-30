@@ -606,6 +606,7 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_GUIDE_GROUP_ORDER = "guide_group_order"
         private const val KEY_ACTIVE_PROFILE = "active_profile_id"
         private const val KEY_RESUME_LAST = "resume_last_channel"
+        private const val KEY_DEDUP_CHANNELS = "deduplicate_channels"
         private const val KEY_CONTENT_LIVE = "content_live"
         private const val KEY_CONTENT_MOVIES = "content_movies"
         private const val KEY_CONTENT_SERIES = "content_series"
