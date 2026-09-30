@@ -13,6 +13,7 @@ import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import androidx.media3.common.Player
+import androidx.media3.common.PlaybackException
 import androidx.media3.ui.AspectRatioFrameLayout
 import androidx.media3.ui.PlayerView
 import app.tufaratv.core.ServiceLocator
@@ -36,6 +37,11 @@ class NativeTvRootView(
     private val playerView = PlayerView(context)
     private val shutter = View(context)
     private val buffering = ProgressBar(context)
+    private val startupOverlay = LinearLayout(context)
+    private val startupText = TextView(context)
+    private val startupProgress = ProgressBar(context)
+    private var firstFrameRendered = false
+    private var startupRetuneAttempted = false
     private val infoBar = LinearLayout(context)
     private val infoTitle = TextView(context)
     private val infoSubtitle = TextView(context)
@@ -73,9 +79,21 @@ class NativeTvRootView(
     private var mode = Mode.FULLSCREEN
     val isFullscreen: Boolean get() = mode == Mode.FULLSCREEN
 
+    private val startupFallback = Runnable {
+        if (firstFrameRendered) return@Runnable
+        if (rows.isNotEmpty()) {
+            startupOverlay.visibility = GONE
+            showGuide(preserveAudio = true)
+        } else {
+            showStartupMessage("Aucune chaîne disponible. Ouvrez le menu pour vérifier la source.")
+        }
+    }
+
     private val bufferWatchdog = Runnable {
         if (controller.player.playbackState == Player.STATE_BUFFERING) {
             controller.resyncCurrent()
+            handler.removeCallbacks(startupFallback)
+            handler.postDelayed(startupFallback, 3_500)
         }
     }
 
@@ -153,6 +171,25 @@ class NativeTvRootView(
         )
         addView(playerFrame, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
+        startupOverlay.orientation = LinearLayout.VERTICAL
+        startupOverlay.gravity = Gravity.CENTER
+        startupOverlay.setBackgroundColor(Color.rgb(8, 12, 20))
+        startupText.apply {
+            text = "Chargement de la télévision…"
+            textSize = 19f
+            setTextColor(Color.WHITE)
+            gravity = Gravity.CENTER
+        }
+        startupOverlay.addView(
+            startupProgress,
+            LinearLayout.LayoutParams(dp(46), dp(46)).apply { bottomMargin = dp(18) },
+        )
+        startupOverlay.addView(
+            startupText,
+            LinearLayout.LayoutParams(LayoutParams.WRAP_CONTENT, LayoutParams.WRAP_CONTENT),
+        )
+        addView(startupOverlay, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
         buildInfoBar()
         addView(infoBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
 
@@ -194,15 +231,40 @@ class NativeTvRootView(
                 when (playbackState) {
                     Player.STATE_BUFFERING -> {
                         buffering.visibility = VISIBLE
+                        showStartupMessage("Connexion à la chaîne…")
                         handler.postDelayed(bufferWatchdog, 5_000)
                     }
-                    Player.STATE_READY, Player.STATE_ENDED -> buffering.visibility = GONE
+                    Player.STATE_READY -> buffering.visibility = GONE
+                    Player.STATE_ENDED -> {
+                        buffering.visibility = GONE
+                        handler.post(startupFallback)
+                    }
+                }
+            }
+
+            override fun onPlayerError(error: PlaybackException) {
+                buffering.visibility = GONE
+                if (!startupRetuneAttempted && settings.lastChannelId > 0L) {
+                    startupRetuneAttempted = true
+                    showStartupMessage("Reconnexion à la chaîne…")
+                    controller.resyncCurrent()
+                    handler.removeCallbacks(startupFallback)
+                    handler.postDelayed(startupFallback, 3_500)
+                } else {
+                    handler.post(startupFallback)
                 }
             }
 
             override fun onRenderedFirstFrame() {
+                firstFrameRendered = true
+                startupRetuneAttempted = false
+                handler.removeCallbacks(startupFallback)
                 handler.removeCallbacks(bufferWatchdog)
                 buffering.visibility = GONE
+                startupOverlay.animate().alpha(0f).setDuration(120).withEndAction {
+                    startupOverlay.visibility = GONE
+                    startupOverlay.alpha = 1f
+                }.start()
                 shutter.animate().alpha(0f).setDuration(150).withEndAction {
                     shutter.visibility = GONE
                 }.start()
@@ -213,7 +275,17 @@ class NativeTvRootView(
             rows = loadedRows
             programMap = loadedPrograms
             guide.submit(rows, programMap, settings.lastChannelId)
-            showFullscreen(initial = true)
+            if (rows.isEmpty()) {
+                showStartupMessage("Aucune chaîne disponible. Vérifiez votre source.")
+            } else {
+                showFullscreen(initial = true)
+                if (!firstFrameRendered) {
+                    startupOverlay.visibility = VISIBLE
+                    startupOverlay.bringToFront()
+                    handler.removeCallbacks(startupFallback)
+                    handler.postDelayed(startupFallback, 3_500)
+                }
+            }
         }
     }
 
@@ -734,6 +806,14 @@ class NativeTvRootView(
         infoBar.bringToFront()
         handler.removeCallbacks(hideInfo)
         handler.postDelayed(hideInfo, 5_000)
+    }
+
+    private fun showStartupMessage(message: String) {
+        if (firstFrameRendered) return
+        startupText.text = message
+        startupOverlay.visibility = VISIBLE
+        startupOverlay.alpha = 1f
+        startupOverlay.bringToFront()
     }
 
     private fun buildInfoBar() {
