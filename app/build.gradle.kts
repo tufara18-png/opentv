@@ -117,7 +117,6 @@ dependencies {
     implementation(libs.androidx.compose.material.icons)
     debugImplementation(libs.androidx.compose.ui.tooling)
 
-    implementation(libs.androidx.tv.material)
     implementation(libs.androidx.navigation.compose)
 
     implementation(libs.media3.exoplayer)
