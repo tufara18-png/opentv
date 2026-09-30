@@ -38,6 +38,7 @@ class NativeTvRootView(
     private val infoTitle = TextView(context)
     private val infoSubtitle = TextView(context)
     private val channelBar = NativeChannelBarView(context)
+    private val groupDrawer = NativeGroupDrawerView(context)
     private val quickActions = LinearLayout(context)
     private val vod = NativeVodBrowserView(context, scope, controller) { showFullscreen() }
     private val search = NativeSearchView(
@@ -119,6 +120,9 @@ class NativeTvRootView(
         channelBar.visibility = GONE
         addView(channelBar, LayoutParams(LayoutParams.MATCH_PARENT, dp(88), Gravity.BOTTOM))
 
+        groupDrawer.visibility = GONE
+        addView(groupDrawer, LayoutParams(dp(330), LayoutParams.MATCH_PARENT, Gravity.START))
+
         buildQuickActions()
         addView(
             quickActions,
@@ -171,6 +175,14 @@ class NativeTvRootView(
 
     fun handleKey(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return false
+
+        if (mode == Mode.GROUPS) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                hideGroups()
+                return true
+            }
+            return false
+        }
 
         if (mode == Mode.SETTINGS) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
@@ -249,7 +261,7 @@ class NativeTvRootView(
                     showFullscreen()
                     true
                 }
-                KeyEvent.KEYCODE_BACK -> { showFullscreen(); true }
+                KeyEvent.KEYCODE_BACK -> { showGroups(); true }
                 KeyEvent.KEYCODE_MENU -> { showSettings(); true }
                 else -> false
             }
@@ -290,6 +302,7 @@ class NativeTvRootView(
         recordings.visibility = GONE
         multiview.visibility = GONE
         settingsDrawer.visibility = GONE
+        groupDrawer.visibility = GONE
         channelBar.visibility = GONE
         quickActions.visibility = GONE
     }
@@ -351,6 +364,35 @@ class NativeTvRootView(
                 .withEndAction { end() }
                 .start()
         }
+    }
+
+    private fun showGroups() {
+        if (controller.groups.isEmpty()) return
+        mode = Mode.GROUPS
+        groupDrawer.submit(controller.groups, controller.currentGroup) { group ->
+            controller.loadGroup(group) { loadedRows, loadedPrograms ->
+                rows = loadedRows
+                programMap = loadedPrograms
+                guide.submit(rows, programMap, rows.firstOrNull()?.id)
+                hideGroups()
+            }
+        }
+        groupDrawer.visibility = VISIBLE
+        groupDrawer.translationX = -dp(330).toFloat()
+        groupDrawer.bringToFront()
+        groupDrawer.animate().translationX(0f).setDuration(180).start()
+    }
+
+    private fun hideGroups() {
+        groupDrawer.animate()
+            .translationX(-groupDrawer.width.toFloat())
+            .setDuration(160)
+            .withEndAction {
+                groupDrawer.visibility = GONE
+                mode = Mode.GUIDE
+                guide.requestFocus()
+            }
+            .start()
     }
 
     private fun showChannelBar() {
@@ -607,5 +649,6 @@ class NativeTvRootView(
         RECORDINGS,
         MULTIVIEW,
         SETTINGS,
+        GROUPS,
     }
 }
