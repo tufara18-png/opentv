@@ -19,6 +19,7 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 
 class TufaraTvApp : Application(), ImageLoaderFactory {
     private val appScope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
@@ -109,10 +110,14 @@ class TufaraTvApp : Application(), ImageLoaderFactory {
         // watch history and NAS recordings. Fire-and-forget and fully guarded: a blank or unreachable
         // NAS returns a result rather than throwing, so a bad launch never costs the user anything.
         if (graph.settings.nasAutoSync.value) {
-            appScope.launch { runCatching { app.tufaratv.sync.NasSync(graph).sync() } }
+            appScope.launch {
+                delay(30_000)
+                runCatching { app.tufaratv.sync.NasSync(graph).sync() }
+            }
         }
 
         appScope.launch {
+            delay(30_000)
             val prefs = getSharedPreferences("opentv", MODE_PRIVATE)
             val seen = prefs.getInt("normalizer_version", 0)
             if (seen < CatalogRepository.NORMALIZER_VERSION) {
