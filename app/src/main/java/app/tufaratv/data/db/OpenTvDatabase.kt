@@ -6,6 +6,7 @@
 package app.tufaratv.data.db
 
 import android.content.Context
+import android.os.Process
 import androidx.room.Database
 import androidx.room.Room
 import androidx.room.RoomDatabase
@@ -37,6 +38,7 @@ import app.tufaratv.data.model.SeriesRule
 import app.tufaratv.data.model.Source
 import app.tufaratv.data.model.SourceKind
 import app.tufaratv.data.model.StreamKind
+import java.util.concurrent.Executors
 
 class Converters {
     @TypeConverter fun sourceKindToString(value: SourceKind): String = value.name
@@ -305,8 +307,26 @@ abstract class OpenTvDatabase : RoomDatabase() {
             }
         }
 
+        private val queryExecutor =
+            Executors.newFixedThreadPool(2) { runnable ->
+                Thread {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                    runnable.run()
+                }.apply { name = "opentv-room-query" }
+            }
+
+        private val transactionExecutor =
+            Executors.newSingleThreadExecutor { runnable ->
+                Thread {
+                    Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                    runnable.run()
+                }.apply { name = "opentv-room-transaction" }
+            }
+
         fun build(context: Context): OpenTvDatabase =
             Room.databaseBuilder(context, OpenTvDatabase::class.java, "opentv.db")
+                .setQueryExecutor(queryExecutor)
+                .setTransactionExecutor(transactionExecutor)
                 // WAL keeps guide writes from blocking guide reads, so a background EPG
                 // refresh cannot make the UI stutter on a slow TV box.
                 .setJournalMode(JournalMode.WRITE_AHEAD_LOGGING)
