@@ -36,6 +36,9 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
     var programmes: Map<String, List<Programme>> = emptyMap()
         private set
 
+    private val epgSegments = LinkedHashMap<Int, Map<String, List<Programme>>>()
+    private var epgCacheLoadedAt = 0L
+
     private var resumeJob: Job? = null
     private var activeVodKey: String? = null
     private var activeVodDuration = 0L
@@ -47,21 +50,61 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
             } else {
                 graph.database.channels().visibleSnapshot()
             }
-            val now = System.currentTimeMillis()
-            val allPrograms = graph.database.programmes()
-                .observeWindow(now - 7_200_000L, now + 28_800_000L)
-                .first()
             channels = rows
-            programmes = allPrograms.groupBy { it.epgChannelId }
-            onReady(rows, programmes)
             val preferred = settings.lastChannelId.takeIf { id -> rows.any { it.id == id } }
                 ?: rows.firstOrNull()?.id
+            val center = rows.indexOfFirst { it.id == preferred }.coerceAtLeast(0)
+            loadEpgSegmentInternal(center)
+            onReady(rows, programmes)
             preferred?.let(::tuneChannel)
         }
     }
 
     fun refreshGuide(onReady: (List<TellyChannelRow>, Map<String, List<Programme>>) -> Unit) =
         loadGuide(onReady)
+
+    fun loadEpgSegment(centerRow: Int, onReady: (Map<String, List<Programme>>) -> Unit) {
+        scope.launch {
+            loadEpgSegmentInternal(centerRow)
+            onReady(programmes)
+        }
+    }
+
+    private suspend fun loadEpgSegmentInternal(centerRow: Int) {
+        if (channels.isEmpty()) return
+        val now = System.currentTimeMillis()
+        if (now - epgCacheLoadedAt > EPG_CACHE_TTL_MS) {
+            epgSegments.clear()
+            programmes = emptyMap()
+            epgCacheLoadedAt = now
+        }
+
+        val segment = centerRow.coerceAtLeast(0) / EPG_SEGMENT_SIZE
+        if (epgSegments.containsKey(segment)) return
+
+        val first = (segment * EPG_SEGMENT_SIZE - EPG_SEGMENT_PREFETCH).coerceAtLeast(0)
+        val last = (first + EPG_SEGMENT_SIZE + EPG_SEGMENT_PREFETCH * 2).coerceAtMost(channels.size)
+        val ids = channels.subList(first, last)
+            .flatMap { listOfNotNull(it.epgOverrideId, it.epgChannelId, it.matchedEpgId) }
+            .distinct()
+
+        val loaded = if (ids.isEmpty()) {
+            emptyList()
+        } else {
+            graph.database.programmes()
+                .observeWindowForChannels(ids, now - 7_200_000L, now + 28_800_000L)
+                .first()
+        }
+        epgSegments[segment] = loaded.groupBy { it.epgChannelId }
+        while (epgSegments.size > EPG_MAX_SEGMENTS) {
+            epgSegments.remove(epgSegments.entries.first().key)
+        }
+        programmes = buildMap {
+            epgSegments.values.forEach { segmentMap ->
+                segmentMap.forEach { (key, value) -> put(key, value) }
+            }
+        }
+    }
 
     fun tuneChannel(channelId: Long) {
         stopVodCheckpointing()
@@ -244,5 +287,12 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
     fun release() {
         stopVodCheckpointing()
         playerController.release()
+    }
+
+    private companion object {
+        const val EPG_SEGMENT_SIZE = 160
+        const val EPG_SEGMENT_PREFETCH = 40
+        const val EPG_MAX_SEGMENTS = 6
+        const val EPG_CACHE_TTL_MS = 90L * 60 * 1000
     }
 }
