@@ -20,7 +20,7 @@ internal data class GuideRowsState(
 object GuideRowsBuilder {
     private const val VERTICAL_PREFETCH_ROWS = 4
 
-    fun update(
+    internal fun update(
         previous: GuideRowsState,
         input: GuideRowsInput,
         programs: List<ProgramEntity>,
