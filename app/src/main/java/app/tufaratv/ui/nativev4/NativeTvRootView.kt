@@ -19,6 +19,7 @@ import app.tufaratv.core.ServiceLocator
 import app.tufaratv.data.db.TellyChannelRow
 import app.tufaratv.data.model.Programme
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.launch
 
 class NativeTvRootView(
     context: Context,
@@ -279,12 +280,14 @@ class NativeTvRootView(
 
         if (event.action != KeyEvent.ACTION_DOWN) return false
 
-        if (event.keyCode == KeyEvent.KEYCODE_BACK &&
-            (event.repeatCount > 0 || event.isLongPress) &&
-            mode in setOf(Mode.MENU, Mode.GROUPS, Mode.SETTINGS, Mode.CHANNEL_BAR, Mode.QUICK)
-        ) {
-            closeOverlayImmediately()
-            return true
+        if (event.keyCode == KeyEvent.KEYCODE_BACK && (event.repeatCount > 0 || event.isLongPress)) {
+            when (mode) {
+                Mode.MENU, Mode.GROUPS, Mode.SETTINGS, Mode.CHANNEL_BAR, Mode.QUICK -> {
+                    closeOverlayImmediately()
+                    return true
+                }
+                else -> Unit
+            }
         }
 
         if (mode == Mode.MENU) {
