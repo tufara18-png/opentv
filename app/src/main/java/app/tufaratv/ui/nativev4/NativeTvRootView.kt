@@ -1,7 +1,6 @@
 package app.tufaratv.ui.nativev4
 
 import android.content.Context
-import android.content.Intent
 import android.graphics.Color
 import android.graphics.drawable.GradientDrawable
 import android.os.Handler
@@ -9,7 +8,6 @@ import android.os.Looper
 import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
-import android.view.ViewGroup
 import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
@@ -21,10 +19,6 @@ import app.tufaratv.data.db.TellyChannelRow
 import app.tufaratv.data.model.Programme
 import kotlinx.coroutines.CoroutineScope
 
-/**
- * One persistent native TV scene: the player Surface never leaves the hierarchy. Guide, channel
- * bar, VOD and settings are overlays, so BACK/OK transitions cannot tear down audio/video.
- */
 class NativeTvRootView(
     context: Context,
     private val scope: CoroutineScope,
@@ -46,6 +40,28 @@ class NativeTvRootView(
     private val channelBar = NativeChannelBarView(context)
     private val quickActions = LinearLayout(context)
     private val vod = NativeVodBrowserView(context, scope, controller) { showFullscreen() }
+    private val search = NativeSearchView(
+        context = context,
+        scope = scope,
+        controller = controller,
+        onChannel = { id ->
+            controller.tuneChannel(id)
+            showInfoFor(id)
+            showFullscreen()
+        },
+        onMovie = {
+            controller.playMovie(it)
+            showFullscreen()
+        },
+        onSeries = { series ->
+            showVodSeries(series)
+        },
+    )
+    private val recordings = NativeRecordingLibraryView(context, scope, controller) {
+        controller.playRecording(it)
+        showFullscreen()
+    }
+    private val multiview = NativeMultiviewView(context, scope, controller)
     private val settingsDrawer = NativeSettingsDrawer(context, controller, ::reloadGuide)
 
     private var rows: List<TellyChannelRow> = emptyList()
@@ -104,12 +120,24 @@ class NativeTvRootView(
         addView(channelBar, LayoutParams(LayoutParams.MATCH_PARENT, dp(88), Gravity.BOTTOM))
 
         buildQuickActions()
-        addView(quickActions, LayoutParams(LayoutParams.WRAP_CONTENT, dp(76), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
-            bottomMargin = dp(34)
-        })
+        addView(
+            quickActions,
+            LayoutParams(LayoutParams.WRAP_CONTENT, dp(76), Gravity.BOTTOM or Gravity.CENTER_HORIZONTAL).apply {
+                bottomMargin = dp(34)
+            },
+        )
 
         vod.visibility = GONE
         addView(vod, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+        search.visibility = GONE
+        addView(search, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+        recordings.visibility = GONE
+        addView(recordings, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
+
+        multiview.visibility = GONE
+        addView(multiview, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
 
         settingsDrawer.visibility = GONE
         addView(settingsDrawer, LayoutParams(dp(430), LayoutParams.MATCH_PARENT, Gravity.END))
@@ -135,17 +163,43 @@ class NativeTvRootView(
         showInfoFor(id)
     }
 
+    fun openRecording(id: Long) {
+        controller.openRecording(id) { found ->
+            if (found != null) showFullscreen()
+        }
+    }
+
     fun handleKey(event: KeyEvent): Boolean {
         if (event.action != KeyEvent.ACTION_DOWN) return false
-
-        if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER && event.repeatCount == 1) {
-            showQuickActions()
-            return true
-        }
 
         if (mode == Mode.SETTINGS) {
             if (event.keyCode == KeyEvent.KEYCODE_BACK) {
                 hideSettings()
+                return true
+            }
+            return false
+        }
+
+        if (mode == Mode.SEARCH) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                showGuide()
+                return true
+            }
+            return false
+        }
+
+        if (mode == Mode.RECORDINGS) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                showGuide()
+                return true
+            }
+            return false
+        }
+
+        if (mode == Mode.MULTIVIEW) {
+            if (event.keyCode == KeyEvent.KEYCODE_BACK) {
+                if (multiview.handleBack()) return true
+                showGuide()
                 return true
             }
             return false
@@ -201,31 +255,46 @@ class NativeTvRootView(
             }
         }
 
+        if (event.keyCode == KeyEvent.KEYCODE_DPAD_CENTER && event.repeatCount == 1) {
+            showQuickActions()
+            return true
+        }
+
         return when (event.keyCode) {
             KeyEvent.KEYCODE_BACK -> { showGuide(); true }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showChannelBar(); true }
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
-                controller.zap(-1); showInfoFor(settings.lastChannelId); true
+                controller.zap(-1)
+                true
             }
             KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_CHANNEL_DOWN -> {
-                controller.zap(+1); showInfoFor(settings.lastChannelId); true
+                controller.zap(+1)
+                true
             }
             KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                showInfoFor(settings.lastChannelId); true
+                showInfoFor(settings.lastChannelId)
+                true
             }
             KeyEvent.KEYCODE_MENU -> { showSettings(); true }
             else -> false
         }
     }
 
+    private fun hideAllSurfaces() {
+        vod.visibility = GONE
+        search.visibility = GONE
+        recordings.visibility = GONE
+        multiview.visibility = GONE
+        settingsDrawer.visibility = GONE
+        channelBar.visibility = GONE
+        quickActions.visibility = GONE
+    }
+
     private fun showGuide() {
         mode = Mode.GUIDE
         handler.removeCallbacks(hideInfo)
         infoBar.visibility = GONE
-        channelBar.visibility = GONE
-        quickActions.visibility = GONE
-        vod.visibility = GONE
-        settingsDrawer.visibility = GONE
+        hideAllSurfaces()
         topNav.visibility = VISIBLE
         guide.visibility = VISIBLE
         guide.bringToFront()
@@ -236,11 +305,10 @@ class NativeTvRootView(
 
         playerFrame.pivotX = 0f
         playerFrame.pivotY = 0f
-        val scale = 0.36f
         playerFrame.animate()
-            .scaleX(scale)
-            .scaleY(scale)
-            .translationX(width * 0.025f)
+            .scaleX(.36f)
+            .scaleY(.36f)
+            .translationX(width * .025f)
             .translationY(dp(70).toFloat())
             .setDuration(250)
             .withEndAction { guide.requestFocus() }
@@ -252,10 +320,7 @@ class NativeTvRootView(
         handler.removeCallbacks(hideChannelBar)
         handler.removeCallbacks(hideQuick)
         controller.player.volume = 1f
-        vod.visibility = GONE
-        settingsDrawer.visibility = GONE
-        channelBar.visibility = GONE
-        quickActions.visibility = GONE
+        hideAllSurfaces()
         topNav.visibility = GONE
         playerFrame.bringToFront()
         infoBar.bringToFront()
@@ -306,16 +371,55 @@ class NativeTvRootView(
         handler.postDelayed(hideQuick, 5_000)
     }
 
-    private fun showVod(mode: NativeVodBrowserView.Mode) {
-        this.mode = Mode.VOD
+    private fun showVod(vodMode: NativeVodBrowserView.Mode) {
+        mode = Mode.VOD
+        hideAllSurfaces()
         guide.visibility = GONE
         topNav.visibility = GONE
-        settingsDrawer.visibility = GONE
-        channelBar.visibility = GONE
-        quickActions.visibility = GONE
         vod.visibility = VISIBLE
         vod.bringToFront()
-        vod.show(mode)
+        vod.show(vodMode)
+    }
+
+    private fun showVodSeries(series: app.tufaratv.data.model.Series) {
+        mode = Mode.VOD
+        hideAllSurfaces()
+        guide.visibility = GONE
+        topNav.visibility = GONE
+        vod.visibility = VISIBLE
+        vod.bringToFront()
+        vod.showSeriesDetail(series)
+    }
+
+    private fun showSearch() {
+        mode = Mode.SEARCH
+        hideAllSurfaces()
+        guide.visibility = GONE
+        topNav.visibility = GONE
+        search.visibility = VISIBLE
+        search.bringToFront()
+        search.focusQuery()
+    }
+
+    private fun showRecordings() {
+        mode = Mode.RECORDINGS
+        hideAllSurfaces()
+        guide.visibility = GONE
+        topNav.visibility = GONE
+        recordings.visibility = VISIBLE
+        recordings.bringToFront()
+        recordings.refresh()
+    }
+
+    private fun showMultiview() {
+        mode = Mode.MULTIVIEW
+        hideAllSurfaces()
+        guide.visibility = GONE
+        topNav.visibility = GONE
+        controller.player.volume = 0f
+        multiview.visibility = VISIBLE
+        multiview.bringToFront()
+        multiview.start()
     }
 
     private fun showSettings() {
@@ -381,14 +485,17 @@ class NativeTvRootView(
         addNav("Live") { showGuide() }
         addNav("Films") { showVod(NativeVodBrowserView.Mode.MOVIES) }
         addNav("Séries") { showVod(NativeVodBrowserView.Mode.SERIES) }
-        addNav("Recherche") { openLegacy("search") }
-        addNav("Multiview") { openLegacy("multiview") }
-        addNav("DVR") { openLegacy("recordings") }
+        addNav("Recherche") { showSearch() }
+        addNav("Multiview") { showMultiview() }
+        addNav("DVR") { showRecordings() }
         addNav("Réglages") { showSettings() }
     }
 
     private fun addNav(label: String, action: () -> Unit) {
-        topNav.addView(actionButton(label, action), LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f))
+        topNav.addView(
+            actionButton(label, action),
+            LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f),
+        )
     }
 
     private fun buildInfoBar() {
@@ -425,7 +532,7 @@ class NativeTvRootView(
             playerView.resizeMode = next
         })
         quickActions.addView(actionButton("PiP") { onEnterPip() })
-        quickActions.addView(actionButton("Multiview") { openLegacy("multiview") })
+        quickActions.addView(actionButton("Multiview") { showMultiview() })
         quickActions.addView(actionButton("Réglages") { showSettings() })
     }
 
@@ -447,20 +554,16 @@ class NativeTvRootView(
             }
         }
 
-    private fun openLegacy(route: String) {
-        context.startActivity(
-            Intent(context, TellyFeatureActivity::class.java)
-                .putExtra(TellyFeatureActivity.EXTRA_ROUTE, route),
-        )
-    }
-
     override fun onDetachedFromWindow() {
         handler.removeCallbacksAndMessages(null)
         controller.checkpointVod()
         super.onDetachedFromWindow()
     }
 
-    fun release() = controller.release()
+    fun release() {
+        multiview.release()
+        controller.release()
+    }
 
     private fun rounded(color: Int) = GradientDrawable().apply {
         setColor(color)
@@ -469,7 +572,6 @@ class NativeTvRootView(
     }
 
     private fun View.fadeVisible(duration: Long) {
-        handler.removeCallbacks(hideInfo)
         visibility = VISIBLE
         alpha = 0f
         animate().alpha(1f).setDuration(duration).start()
@@ -484,5 +586,15 @@ class NativeTvRootView(
 
     private fun dp(v: Int) = (v * resources.displayMetrics.density + .5f).toInt()
 
-    private enum class Mode { FULLSCREEN, GUIDE, CHANNEL_BAR, QUICK, VOD, SETTINGS }
+    private enum class Mode {
+        FULLSCREEN,
+        GUIDE,
+        CHANNEL_BAR,
+        QUICK,
+        VOD,
+        SEARCH,
+        RECORDINGS,
+        MULTIVIEW,
+        SETTINGS,
+    }
 }
