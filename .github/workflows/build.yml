@@ -33,6 +33,18 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Reject Compose and Telly
+        shell: bash
+        run: |
+          set -euo pipefail
+          if grep -R -n -E 'androidx\.compose|@Composable|org\.jetbrains\.kotlin\.plugin\.compose|compose[[:space:]]*=[[:space:]]*true|activity-compose|navigation-compose|coil-compose'             app/src app/build.gradle.kts build.gradle.kts gradle/libs.versions.toml 2>/dev/null; then
+            echo "Compose reference found; native-TV build must stay Compose-free."
+            exit 1
+          fi
+          test ! -e telly
+          test ! -e tellyFrontend
+          test ! -e .gitmodules
+
       - name: Unit tests
         run: ./gradlew testDebugUnitTest --stacktrace
 
