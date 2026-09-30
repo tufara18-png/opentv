@@ -31,13 +31,14 @@ class MainActivity : ComponentActivity() {
         handleLaunchIntent(intent)
 
         val settings = AppSettings.get(this)
-        if (settings.lastLivePlayback() != null || settings.libraryPrepared) {
-            // Normal cold-start path: mount the persistent player immediately. NativeTvController
-            // starts the cached live URL before it asks Room for categories/guide rows.
+        if (settings.lastLivePlayback() != null) {
+            // Fast path only when we have an actual cached playable channel. The native root will
+            // immediately show a visible loading surface and refresh the URL if the cache is stale.
             mountNativeTv()
         } else {
-            // Migration/first-run fallback only. Returning users stop paying this DB query once a
-            // stream has been played and cached in SharedPreferences.
+            // Do not trust libraryPrepared by itself: upgrades historically defaulted that flag to
+            // true, even when no usable source/catalogue existed. Verify Room before mounting a
+            // fullscreen player that would otherwise be indistinguishable from a black screen.
             lifecycleScope.launch {
                 if (hasExistingCatalogue()) mountNativeTv() else mountNativeSetup()
             }
