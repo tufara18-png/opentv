@@ -422,7 +422,7 @@ class OpenTvTellyGraph(context: Context) {
         const val PROVIDER_TEST_TIMEOUT_MS = 20_000L
         const val LIVE_SYNC_TIMEOUT_MS = 120_000L
         const val FIRST_CHANNEL_TIMEOUT_MS = 30_000L
-        const val EPG_BACKGROUND_DELAY_MS = 5_000L
+        const val EPG_BACKGROUND_DELAY_MS = 30_000L
         const val VOD_BACKGROUND_DELAY_MS = 90_000L
     }
 
