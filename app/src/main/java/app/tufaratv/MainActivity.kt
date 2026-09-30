@@ -16,10 +16,10 @@ import android.util.Rational
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
 import androidx.lifecycle.lifecycleScope
+import app.tufaratv.core.AppSettings
 import app.tufaratv.core.ServiceLocator
 import app.tufaratv.ui.nativev4.NativeSourceSetupView
 import app.tufaratv.ui.nativev4.NativeTvRootView
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
@@ -30,11 +30,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         handleLaunchIntent(intent)
 
-        lifecycleScope.launch {
-            if (hasExistingCatalogue()) {
-                mountNativeTv()
-            } else {
-                mountNativeSetup()
+        val settings = AppSettings.get(this)
+        if (settings.lastLivePlayback() != null || settings.libraryPrepared) {
+            // Normal cold-start path: mount the persistent player immediately. NativeTvController
+            // starts the cached live URL before it asks Room for categories/guide rows.
+            mountNativeTv()
+        } else {
+            // Migration/first-run fallback only. Returning users stop paying this DB query once a
+            // stream has been played and cached in SharedPreferences.
+            lifecycleScope.launch {
+                if (hasExistingCatalogue()) mountNativeTv() else mountNativeSetup()
             }
         }
     }
