@@ -319,6 +319,11 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         }
     }
 
+    suspend fun vodCategoryLabels(kind: StreamKind): Map<String, String> =
+        graph.database.categories().allByKind(kind).associate { category ->
+            "${category.sourceId}|${category.id}" to category.name
+        }
+
     fun loadMovies(
         onProgress: (Int) -> Unit = {},
         onUpdate: (List<Movie>, Boolean) -> Unit,
