@@ -1,7 +1,7 @@
 # Media3 and OkHttp ship their own consumer rules; these cover our own reflection surface.
 
 # Room entities are constructed reflectively by generated code.
--keep class app.opentv.data.model.** { *; }
+-keep class app.tufaratv.data.model.** { *; }
 
 # kotlinx.serialization -----------------------------------------------------------------
 # The generated $$serializer classes and Companion.serializer() accessors are reached
@@ -35,10 +35,10 @@
 
 # Our own @Serializable DTOs (Xtream API models, GitHub release model). Belt-and-braces on
 # top of the generic rules above, because these are the payloads a broken release fails on.
--keep class app.opentv.data.remote.** { *; }
--keepclassmembers class app.opentv.data.remote.** { *; }
--keep class app.opentv.sync.** { *; }
--keepclassmembers class app.opentv.sync.** { *; }
+-keep class app.tufaratv.data.remote.** { *; }
+-keepclassmembers class app.tufaratv.data.remote.** { *; }
+-keep class app.tufaratv.sync.** { *; }
+-keepclassmembers class app.tufaratv.sync.** { *; }
 
 # OkHttp pulls in optional Conscrypt/BouncyCastle providers it does not need on Android.
 -dontwarn okhttp3.internal.platform.**
