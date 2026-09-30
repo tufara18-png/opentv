@@ -9,7 +9,7 @@ import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
 import androidx.media3.ui.AspectRatioFrameLayout
-import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.leanback.widget.VerticalGridView
 import androidx.recyclerview.widget.RecyclerView
 import app.tufaratv.core.ServiceLocator
 
@@ -20,7 +20,7 @@ class NativeSettingsDrawer(
 ) : LinearLayout(context) {
     private val graph = ServiceLocator.get(context)
     private val settings = graph.settings
-    private val list = RecyclerView(context)
+    private val list = VerticalGridView(context)
     private val adapter = SettingsAdapter()
 
     init {
@@ -37,7 +37,7 @@ class NativeSettingsDrawer(
             bottomMargin = dp(18)
         })
 
-        list.layoutManager = LinearLayoutManager(context)
+        list.setNumColumns(1)
         list.adapter = adapter
         list.itemAnimator = null
         list.setHasFixedSize(true)
