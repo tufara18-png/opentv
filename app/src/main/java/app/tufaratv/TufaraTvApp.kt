@@ -61,6 +61,17 @@ class TufaraTvApp : Application(), ImageLoaderFactory {
     override fun onCreate() {
         super.onCreate()
         val graph = ServiceLocator.get(this)
+
+        // Pre-warm the Room/SQLite connection pool off the UI thread. The native TV shell never
+        // pays the first-open/schema/WAL cost on the first D-pad interaction.
+        appScope.launch(Dispatchers.IO) {
+            runCatching {
+                graph.database.openHelper.writableDatabase.query("SELECT 1").use { cursor ->
+                    if (cursor.moveToFirst()) cursor.getInt(0)
+                }
+            }
+        }
+
         // Channels are a persistent local catalogue. Never re-download them just because the app
         // process started (or because an old periodic worker became due): initial source setup and
         // the explicit Refresh action are the only channel-sync entry points.
