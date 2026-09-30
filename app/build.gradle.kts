@@ -143,6 +143,7 @@ dependencies {
     // drive via a user-granted tree URI, with no storage permission.
     implementation(libs.androidx.documentfile)
     implementation(libs.androidx.recyclerview)
+    implementation(libs.androidx.leanback)
     implementation("io.coil-kt:coil:2.7.0")
     implementation(libs.coil.compose)
     implementation(libs.zxing.core)
