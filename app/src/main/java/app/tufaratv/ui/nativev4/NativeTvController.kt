@@ -53,6 +53,7 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
     private var epgCacheLoadedAt = 0L
 
     private var resumeJob: Job? = null
+    private var historyJob: Job? = null
     private var activeVodKey: String? = null
     private var activeVodDuration = 0L
 
@@ -231,12 +232,25 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         val request = requestForChannel(channelId) ?: return false
         playerController.play(request, debounce = false)
         settings.recordLastLivePlayback(channelId, request.url, request.title, request.userAgent)
-        settings.recordRecentChannel(channelId)
+
+        // Surfing should not pollute history. Commit only if the user stays on this channel.
+        historyJob?.cancel()
+        historyJob = scope.launch {
+            delay(5_000)
+            if (settings.lastChannelId == channelId) settings.recordRecentChannel(channelId)
+        }
         return true
     }
 
     fun tuneChannel(channelId: Long) {
         scope.launch { tuneChannelNow(channelId) }
+    }
+
+    suspend fun recentChannels(): List<TellyChannelRow> {
+        val ids = settings.recentChannelIds.value
+        if (ids.isEmpty()) return emptyList()
+        val byId = graph.database.channels().rowsByIdsTelly(ids).associateBy { it.id }
+        return ids.mapNotNull(byId::get)
     }
 
     fun resyncCurrent() {
@@ -479,6 +493,8 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
     }
 
     fun release() {
+        historyJob?.cancel()
+        historyJob = null
         stopVodCheckpointing()
         playerController.release()
     }
