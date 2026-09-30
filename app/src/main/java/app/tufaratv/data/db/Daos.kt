@@ -399,6 +399,17 @@ interface ChannelDao {
 
     @Query(
         """
+        SELECT id, sourceId, displayName, customName, categoryId, logoUrl,
+               epgChannelId, matchedEpgId, epgOverrideId, tvArchive, tvArchiveDays,
+               number, streamUrl, favourite, hidden, sortIndex
+        FROM channels
+        WHERE id IN (:ids)
+        """
+    )
+    suspend fun rowsByIdsTelly(ids: List<Long>): List<TellyChannelRow>
+
+    @Query(
+        """
         SELECT c.id, c.sourceId, c.displayName, c.customName, c.categoryId, c.logoUrl,
                c.epgChannelId, c.matchedEpgId, c.epgOverrideId, c.tvArchive, c.tvArchiveDays,
                c.number, c.streamUrl, c.favourite, c.hidden, c.sortIndex
