@@ -582,7 +582,6 @@ class ChannelsViewModel(app: Application) : AndroidViewModel(app) {
      * quality of the same channel, for the in-player switch. `UK| BBC ONE SD/HD/FHD/RAW`
      * is one row, not four — the guide has one BBC One, and so should we.
      */
-    @androidx.compose.runtime.Immutable
     data class Row(
         val primary: Channel,
         val variants: List<Channel>,
