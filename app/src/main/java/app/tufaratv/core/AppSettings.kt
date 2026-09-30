@@ -640,6 +640,9 @@ class AppSettings private constructor(context: Context) {
         private const val KEY_CONTENT_MOVIES = "content_movies"
         private const val KEY_CONTENT_SERIES = "content_series"
         private const val KEY_LAST_CHANNEL = "last_channel_id"
+        private const val KEY_LAST_CHANNEL_URL = "last_channel_url"
+        private const val KEY_LAST_CHANNEL_TITLE = "last_channel_title"
+        private const val KEY_LAST_CHANNEL_UA = "last_channel_user_agent"
         private const val KEY_RECENT_CHANNELS = "recent_channel_ids"
         private const val KEY_RESIZE_MODE = "player_resize_mode"
         private const val MAX_RECENT_CHANNELS = 12
