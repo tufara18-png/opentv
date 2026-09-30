@@ -101,6 +101,8 @@ class NativeVodBrowserView(
         }
     }
 
+    fun showSeriesDetail(series: Series) = openSeries(series)
+
     fun handleBack(): Boolean {
         val series = activeSeries ?: return false
         activeSeries = null
