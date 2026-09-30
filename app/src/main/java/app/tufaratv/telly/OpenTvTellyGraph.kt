@@ -2,6 +2,7 @@ package app.tufaratv.telly
 
 import android.content.Context
 import android.util.Log
+import android.os.Process
 import app.tufaratv.core.ServiceLocator as OpenTvServiceLocator
 import app.tufaratv.data.model.Source
 import app.tufaratv.data.model.SourceKind
@@ -33,7 +34,9 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withTimeoutOrNull
+import kotlinx.coroutines.asCoroutineDispatcher
 import okhttp3.Request
+import java.util.concurrent.Executors
 
 /**
  * Production dependency graph for the Telly Android-TV frontend.
@@ -44,7 +47,15 @@ import okhttp3.Request
 class OpenTvTellyGraph(context: Context) {
     private val appContext = context.applicationContext
     private val openTv = OpenTvServiceLocator.get(appContext)
-    private val syncScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    private val syncDispatcher =
+        Executors.newSingleThreadExecutor { runnable ->
+            Thread {
+                Process.setThreadPriority(Process.THREAD_PRIORITY_BACKGROUND)
+                runnable.run()
+            }.apply { name = "tufaratv-provider-sync" }
+        }.asCoroutineDispatcher()
+
+    private val syncScope = CoroutineScope(SupervisorJob() + syncDispatcher)
 
     init {
         OpenTvProviderBridge.install { draft ->
