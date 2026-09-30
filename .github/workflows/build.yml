@@ -39,11 +39,21 @@ jobs:
       - name: Assemble debug APK
         run: ./gradlew assembleDebug --stacktrace
 
+      - name: Assemble release performance APK
+        run: ./gradlew assembleRelease --stacktrace
+
       - name: Upload debug APK
         uses: actions/upload-artifact@v4
         with:
           name: tufaratv-debug-apk
           path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
+
+      - name: Upload release performance APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: tufaratv-release-perf-apk
+          path: app/build/outputs/apk/release/*.apk
           if-no-files-found: error
 
       - name: Upload test reports
