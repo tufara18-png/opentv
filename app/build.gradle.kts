@@ -101,7 +101,6 @@ ksp {
 }
 
 dependencies {
-    implementation(project(":tellyFrontend"))
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.3")
 
     implementation(libs.androidx.core.ktx)
