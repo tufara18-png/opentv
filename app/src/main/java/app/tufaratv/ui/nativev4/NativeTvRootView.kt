@@ -51,6 +51,7 @@ class NativeTvRootView(
     private var rows: List<TellyChannelRow> = emptyList()
     private var programMap: Map<String, List<Programme>> = emptyMap()
     private var mode = Mode.FULLSCREEN
+    val isFullscreen: Boolean get() = mode == Mode.FULLSCREEN
 
     private val hideInfo = Runnable { infoBar.fadeGone(150) }
     private val hideChannelBar = Runnable {
