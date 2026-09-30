@@ -73,7 +73,6 @@ internal fun distinctByQuality(channels: List<app.tufaratv.data.model.Channel>):
 }
 
 /** A home/detail row: a genre label and the titles under it. Generic so movies and series share it. */
-@androidx.compose.runtime.Immutable
 data class GenreGroup<T>(val genre: String, val items: List<T>)
 
 /**
@@ -100,7 +99,6 @@ data class NextEpisodePlayback(
 )
 
 /** One logical film with its switchable quality tiers, best first — the VOD analogue of a channel group. */
-@androidx.compose.runtime.Immutable
 data class MovieVariantGroup(
     /** Best-quality variant: what a row shows and plays by default. */
     val primary: Movie,
