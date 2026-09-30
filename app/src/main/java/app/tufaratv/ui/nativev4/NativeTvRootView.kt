@@ -45,7 +45,7 @@ class NativeTvRootView(
     private val infoSubtitle = TextView(context)
     private val channelBar = NativeChannelBarView(context)
     private val quickActions = LinearLayout(context)
-    private val vod = NativeVodBrowserView(context, scope, controller, ::showFullscreen)
+    private val vod = NativeVodBrowserView(context, scope, controller) { showFullscreen() }
     private val settingsDrawer = NativeSettingsDrawer(context, controller, ::reloadGuide)
 
     private var rows: List<TellyChannelRow> = emptyList()
@@ -271,7 +271,7 @@ class NativeTvRootView(
                 .translationX(0f)
                 .translationY(0f)
                 .setDuration(250)
-                .withEndAction(end)
+                .withEndAction { end() }
                 .start()
         }
     }
