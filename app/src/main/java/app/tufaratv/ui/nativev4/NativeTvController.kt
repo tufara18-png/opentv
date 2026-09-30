@@ -102,7 +102,7 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
                 ),
                 debounce = false,
             )
-            settings.recordRecentChannel(actual.id)
+            settings.recordRecentChannel(base.id)
         }
     }
 
