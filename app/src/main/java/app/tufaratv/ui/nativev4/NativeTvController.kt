@@ -167,10 +167,33 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun movies(): List<Movie> = graph.database.movies().all()
-    suspend fun series(): List<Series> = graph.database.series().all()
-    suspend fun episodes(series: Series) =
-        graph.database.episodes().forSeries(series.sourceId, series.seriesId)
+    suspend fun movies(): List<Movie> {
+        if (settings.moviesEnabled.value && graph.database.movies().count() == 0) {
+            val now = System.currentTimeMillis()
+            graph.sourceRepository.enabled().forEach {
+                graph.catalogRepository.syncVod(it, now, includeMovies = true, includeSeries = false)
+            }
+        }
+        return graph.database.movies().all()
+    }
+
+    suspend fun series(): List<Series> {
+        if (settings.seriesEnabled.value && graph.database.series().count() == 0) {
+            val now = System.currentTimeMillis()
+            graph.sourceRepository.enabled().forEach {
+                graph.catalogRepository.syncVod(it, now, includeMovies = false, includeSeries = true)
+            }
+        }
+        return graph.database.series().all()
+    }
+
+    suspend fun episodes(series: Series): List<app.tufaratv.data.model.Episode> {
+        val source = graph.sourceRepository.byId(series.sourceId)
+        if (source != null) {
+            graph.catalogRepository.ensureEpisodes(source, series.seriesId, series.tmdbId)
+        }
+        return graph.database.episodes().forSeries(series.sourceId, series.seriesId)
+    }
 
     fun setSubtitles(enabled: Boolean) {
         settings.setSubtitlesEnabled(enabled)
