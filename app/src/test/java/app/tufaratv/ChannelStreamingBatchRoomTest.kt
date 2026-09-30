@@ -130,7 +130,8 @@ class ChannelStreamingBatchRoomTest {
         val logical = db.channels().visibleLogicalSnapshot()
 
         assertThat(logical).hasSize(2)
-        assertThat(logical.map { it.streamId }).containsExactly("fhd", "unique")
+        assertThat(logical.map { it.streamUrl })
+            .containsExactly("http://example.test/live/fhd", "http://example.test/live/unique")
     }
 
 }
