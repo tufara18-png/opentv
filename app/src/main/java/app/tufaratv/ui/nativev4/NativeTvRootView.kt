@@ -280,6 +280,10 @@ class NativeTvRootView(
         }
     }
 
+    private fun exitMultiviewIfNeeded() {
+        if (mode == Mode.MULTIVIEW) multiview.stop()
+    }
+
     private fun hideAllSurfaces() {
         vod.visibility = GONE
         search.visibility = GONE
@@ -291,6 +295,7 @@ class NativeTvRootView(
     }
 
     private fun showGuide() {
+        exitMultiviewIfNeeded()
         mode = Mode.GUIDE
         handler.removeCallbacks(hideInfo)
         infoBar.visibility = GONE
@@ -316,6 +321,7 @@ class NativeTvRootView(
     }
 
     private fun showFullscreen(initial: Boolean = false) {
+        exitMultiviewIfNeeded()
         mode = Mode.FULLSCREEN
         handler.removeCallbacks(hideChannelBar)
         handler.removeCallbacks(hideQuick)
@@ -372,6 +378,7 @@ class NativeTvRootView(
     }
 
     private fun showVod(vodMode: NativeVodBrowserView.Mode) {
+        exitMultiviewIfNeeded()
         mode = Mode.VOD
         hideAllSurfaces()
         guide.visibility = GONE
@@ -382,6 +389,7 @@ class NativeTvRootView(
     }
 
     private fun showVodSeries(series: app.tufaratv.data.model.Series) {
+        exitMultiviewIfNeeded()
         mode = Mode.VOD
         hideAllSurfaces()
         guide.visibility = GONE
@@ -392,6 +400,7 @@ class NativeTvRootView(
     }
 
     private fun showSearch() {
+        exitMultiviewIfNeeded()
         mode = Mode.SEARCH
         hideAllSurfaces()
         guide.visibility = GONE
@@ -402,6 +411,7 @@ class NativeTvRootView(
     }
 
     private fun showRecordings() {
+        exitMultiviewIfNeeded()
         mode = Mode.RECORDINGS
         hideAllSurfaces()
         guide.visibility = GONE
@@ -423,6 +433,7 @@ class NativeTvRootView(
     }
 
     private fun showSettings() {
+        exitMultiviewIfNeeded()
         mode = Mode.SETTINGS
         settingsDrawer.rebuild()
         settingsDrawer.visibility = VISIBLE
