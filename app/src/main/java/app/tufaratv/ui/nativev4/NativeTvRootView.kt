@@ -373,7 +373,7 @@ class NativeTvRootView(
     }
 
     private fun buildTopNav() {
-        topNav.orientation = HORIZONTAL
+        topNav.orientation = LinearLayout.HORIZONTAL
         topNav.gravity = Gravity.CENTER_VERTICAL
         topNav.setPadding(dp(22), 0, dp(22), 0)
         topNav.setBackgroundColor(Color.argb(220, 11, 15, 25))
@@ -392,7 +392,7 @@ class NativeTvRootView(
     }
 
     private fun buildInfoBar() {
-        infoBar.orientation = VERTICAL
+        infoBar.orientation = LinearLayout.VERTICAL
         infoBar.setPadding(dp(28), dp(15), dp(28), dp(18))
         infoBar.setBackgroundColor(Color.argb(224, 11, 15, 25))
         infoBar.visibility = GONE
@@ -406,7 +406,7 @@ class NativeTvRootView(
     }
 
     private fun buildQuickActions() {
-        quickActions.orientation = HORIZONTAL
+        quickActions.orientation = LinearLayout.HORIZONTAL
         quickActions.gravity = Gravity.CENTER
         quickActions.setPadding(dp(12), dp(8), dp(12), dp(8))
         quickActions.background = rounded(0xEE0B0F19.toInt())
