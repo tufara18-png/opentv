@@ -16,6 +16,7 @@ val syncTellySources by tasks.registering(Sync::class) {
         exclude("com/johncorser/telly/features/multiview/MultiviewPanes.kt")
         exclude("com/johncorser/telly/features/onboarding/WizardScreen.kt")
         exclude("com/johncorser/telly/features/guide/GuideScreenRailParts.kt")
+        exclude("com/johncorser/telly/features/guide/GuideScreenGrid.kt")
         exclude("com/johncorser/telly/core/ui/TellyScreenWidgets.kt")
         exclude("com/johncorser/telly/features/panel/PanelViewModel.kt")
         exclude("com/johncorser/telly/features/guide/GuideController.kt")
