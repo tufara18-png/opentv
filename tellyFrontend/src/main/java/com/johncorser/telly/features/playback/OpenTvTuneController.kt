@@ -13,6 +13,7 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 
@@ -38,6 +39,11 @@ class TuneController(
     val channels: StateFlow<List<ChannelEntity>> =
         channelDao.observeVisible().stateIn(scope, SharingStarted.Eagerly, emptyList())
 
+    private val channelIndex: StateFlow<ChannelIndex> =
+        channels
+            .map(ChannelIndex::build)
+            .stateIn(scope, SharingStarted.Eagerly, ChannelIndex.EMPTY)
+
     private val mutableCurrent = MutableStateFlow<ChannelEntity?>(null)
     val current: StateFlow<ChannelEntity?> = mutableCurrent.asStateFlow()
 
@@ -46,7 +52,7 @@ class TuneController(
         scope.launch {
             val list = channels.first { it.isNotEmpty() }
             if (mutableCurrent.value == null) {
-                ChannelZapper.restore(list, store.getLong(LAST_CHANNEL_KEY))?.let { tune(it, allowExternal = false) }
+                channelIndex.value.restore(store.getLong(LAST_CHANNEL_KEY))?.let { tune(it, allowExternal = false) }
             }
         }
     }
@@ -63,7 +69,7 @@ class TuneController(
         scope.launch {
             val list = channels.first { it.isNotEmpty() }
             val storedId = store.getLong(LAST_CHANNEL_KEY) ?: return@launch
-            ChannelZapper.restore(list, storedId)?.let { tune(it, allowExternal = false) }
+            channelIndex.value.restore(storedId)?.let { tune(it, allowExternal = false) }
         }
     }
 
@@ -163,23 +169,55 @@ class TuneController(
 
     /** Tunes the channel [delta] steps away (wraps); false when impossible or PIN-gated. */
     fun zap(delta: Int): Boolean {
-        val next = ChannelZapper.neighbour(channels.value, mutableCurrent.value, delta) ?: return false
+        val next = channelIndex.value.neighbour(mutableCurrent.value?.id, delta) ?: return false
         tune(next)
         return mutableCurrent.value?.id == next.id
     }
 
-    fun byId(channelId: Long): ChannelEntity? = channels.value.firstOrNull { it.id == channelId }
+    fun byId(channelId: Long): ChannelEntity? = channelIndex.value.byId[channelId]
 
     /** Retunes to the next channel when [channel] is about to disappear. */
     fun zapAwayFrom(channel: ChannelEntity) {
         if (channel.id != mutableCurrent.value?.id) return
-        ChannelZapper
-            .neighbour(channels.value, channel, +1)
+        channelIndex.value
+            .neighbour(channel.id, +1)
             ?.takeIf { it.id != channel.id }
             ?.let(::tune)
     }
 
     companion object {
         const val LAST_CHANNEL_KEY = "lastChannelId"
+    }
+}
+
+
+private data class ChannelIndex(
+    val ordered: List<ChannelEntity>,
+    val byId: Map<Long, ChannelEntity>,
+    val positionById: Map<Long, Int>,
+) {
+    fun restore(lastId: Long?): ChannelEntity? =
+        lastId?.let(byId::get) ?: ordered.firstOrNull()
+
+    fun neighbour(currentId: Long?, delta: Int): ChannelEntity? {
+        if (ordered.isEmpty()) return null
+        val current = currentId?.let(positionById::get)
+        if (current == null) return ordered.first()
+        return ordered[(current + delta).mod(ordered.size)]
+    }
+
+    companion object {
+        val EMPTY = ChannelIndex(emptyList(), emptyMap(), emptyMap())
+
+        fun build(channels: List<ChannelEntity>): ChannelIndex {
+            if (channels.isEmpty()) return EMPTY
+            val byId = HashMap<Long, ChannelEntity>(channels.size * 4 / 3 + 1)
+            val positions = HashMap<Long, Int>(channels.size * 4 / 3 + 1)
+            channels.forEachIndexed { index, channel ->
+                byId[channel.id] = channel
+                positions[channel.id] = index
+            }
+            return ChannelIndex(channels, byId, positions)
+        }
     }
 }
