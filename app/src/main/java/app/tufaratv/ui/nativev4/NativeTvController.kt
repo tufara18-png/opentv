@@ -222,21 +222,33 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         }
     }
 
-    suspend fun movies(): List<Movie> {
-        if (settings.moviesEnabled.value && graph.database.movies().count() == 0) {
+    suspend fun movies(onProgress: ((Int) -> Unit)? = null): List<Movie> {
+        if (graph.database.movies().count() == 0) {
             val now = System.currentTimeMillis()
-            graph.sourceRepository.enabled().forEach {
-                graph.catalogRepository.syncVod(it, now, includeMovies = true, includeSeries = false)
+            graph.sourceRepository.enabled().forEach { source ->
+                graph.catalogRepository.syncVod(
+                    source = source,
+                    nowUtcMillis = now,
+                    includeMovies = true,
+                    includeSeries = false,
+                    onProgress = { movies, _ -> onProgress?.invoke(movies) },
+                )
             }
         }
         return graph.database.movies().all()
     }
 
-    suspend fun series(): List<Series> {
-        if (settings.seriesEnabled.value && graph.database.series().count() == 0) {
+    suspend fun series(onProgress: ((Int) -> Unit)? = null): List<Series> {
+        if (graph.database.series().count() == 0) {
             val now = System.currentTimeMillis()
-            graph.sourceRepository.enabled().forEach {
-                graph.catalogRepository.syncVod(it, now, includeMovies = false, includeSeries = true)
+            graph.sourceRepository.enabled().forEach { source ->
+                graph.catalogRepository.syncVod(
+                    source = source,
+                    nowUtcMillis = now,
+                    includeMovies = false,
+                    includeSeries = true,
+                    onProgress = { _, series -> onProgress?.invoke(series) },
+                )
             }
         }
         return graph.database.series().all()
