@@ -5,47 +5,26 @@
  */
 package app.tufaratv
 
+import android.app.PictureInPictureParams
 import android.app.UiModeManager
 import android.content.Context
 import android.content.Intent
 import android.content.res.Configuration
+import android.os.Build
 import android.os.Bundle
+import android.util.Rational
 import android.view.KeyEvent
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.setContent
 import androidx.lifecycle.lifecycleScope
 import app.tufaratv.core.ServiceLocator
-import app.tufaratv.telly.OpenTvTellyHost
+import app.tufaratv.ui.nativev4.NativeSourceSetupView
 import app.tufaratv.ui.nativev4.NativeTvRootView
-import app.tufaratv.ui.nativev4.TellyFeatureActivity
-import com.johncorser.telly.core.ServiceLocator as TellyServiceLocator
-import com.johncorser.telly.core.navigation.Navigator
-import com.johncorser.telly.core.navigation.Route
-import com.johncorser.telly.core.settings.TellySettings
-import com.johncorser.telly.core.settings.withAppLocale
-import com.johncorser.telly.features.pip.PipActivityBridge
-import com.johncorser.telly.features.pip.PipState
-import com.johncorser.telly.features.playback.TuneController
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
-    private val navigator = Navigator(start = Route.Boot)
-    private val pip = PipActivityBridge(this, PipState.shared, ::pipOnHome, ::playbackIsFullscreen)
     private var nativeRoot: NativeTvRootView? = null
     private var pendingChannelId: Long? = null
-
-    private fun pipOnHome(): Boolean =
-        TellyServiceLocator.settingsRepository(this).get(TellySettings.PIP_ON_HOME)
-
-    private fun playbackIsFullscreen(): Boolean =
-        nativeRoot?.isFullscreen ?: (navigator.stack.value.lastOrNull() == Route.Playback)
-
-    override fun attachBaseContext(newBase: Context) {
-        val language =
-            TellyServiceLocator.settingsRepository(newBase).get(TellySettings.LANGUAGE)
-        super.attachBaseContext(newBase.withAppLocale(language))
-    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -55,8 +34,7 @@ class MainActivity : ComponentActivity() {
             if (hasExistingCatalogue()) {
                 mountNativeTv()
             } else {
-                mountOnboarding()
-                watchForFirstSource()
+                mountNativeSetup()
             }
         }
     }
@@ -65,7 +43,7 @@ class MainActivity : ComponentActivity() {
         val root = NativeTvRootView(
             context = this,
             scope = lifecycleScope,
-            onEnterPip = pip::enter,
+            onEnterPip = ::enterPipNow,
         )
         nativeRoot?.release()
         nativeRoot = root
@@ -76,37 +54,21 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private fun mountOnboarding() {
+    private fun mountNativeSetup() {
         nativeRoot = null
-        setContent {
-            OpenTvTellyHost(
-                navigator = navigator,
-                onEnterPip = pip::enter,
-            )
-        }
+        setContentView(
+            NativeSourceSetupView(
+                context = this,
+                scope = lifecycleScope,
+                onReady = { mountNativeTv() },
+            ),
+        )
     }
 
     private suspend fun hasExistingCatalogue(): Boolean {
         val graph = ServiceLocator.get(this)
         return graph.sourceRepository.enabled().isNotEmpty() &&
             graph.database.channels().totalVisibleCount() > 0
-    }
-
-    private suspend fun firstImportCompleted(): Boolean {
-        val graph = ServiceLocator.get(this)
-        val sources = graph.sourceRepository.enabled()
-        return sources.any { it.lastCatalogSyncMillis > 0L } &&
-            graph.database.channels().totalVisibleCount() > 0
-    }
-
-    private suspend fun watchForFirstSource() {
-        while (nativeRoot == null) {
-            if (firstImportCompleted()) {
-                mountNativeTv()
-                return
-            }
-            delay(500)
-        }
     }
 
     override fun dispatchKeyEvent(event: KeyEvent): Boolean {
@@ -123,7 +85,6 @@ class MainActivity : ComponentActivity() {
     private fun handleLaunchIntent(intent: Intent?) {
         val channelId = intent?.getLongExtra(EXTRA_PLAY_CHANNEL, 0L) ?: 0L
         if (channelId > 0L) {
-            TellyServiceLocator.keyValueStore(this).putLong(TuneController.LAST_CHANNEL_KEY, channelId)
             pendingChannelId = channelId
             nativeRoot?.playChannel(channelId)
             intent?.removeExtra(EXTRA_PLAY_CHANNEL)
@@ -131,29 +92,22 @@ class MainActivity : ComponentActivity() {
 
         val recordingId = intent?.getLongExtra(EXTRA_WATCH_RECORDING, 0L) ?: 0L
         if (recordingId > 0L) {
-            startActivity(
-                Intent(this, TellyFeatureActivity::class.java)
-                    .putExtra(TellyFeatureActivity.EXTRA_ROUTE, "recordings"),
-            )
+            nativeRoot?.openRecording(recordingId)
             intent?.removeExtra(EXTRA_WATCH_RECORDING)
         }
     }
 
     fun enterPipNow() {
-        pip.enter()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val params = PictureInPictureParams.Builder()
+            .setAspectRatio(Rational(16, 9))
+            .build()
+        enterPictureInPictureMode(params)
     }
 
     override fun onUserLeaveHint() {
         super.onUserLeaveHint()
-        pip.onUserLeaveHint()
-    }
-
-    override fun onPictureInPictureModeChanged(
-        isInPictureInPictureMode: Boolean,
-        newConfig: Configuration,
-    ) {
-        super.onPictureInPictureModeChanged(isInPictureInPictureMode, newConfig)
-        pip.onModeChanged(isInPictureInPictureMode)
+        if (nativeRoot?.isFullscreen == true) enterPipNow()
     }
 
     override fun onDestroy() {
