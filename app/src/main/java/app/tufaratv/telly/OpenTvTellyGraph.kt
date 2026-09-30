@@ -108,14 +108,11 @@ class OpenTvTellyGraph(context: Context) {
                                 TAG,
                                 "Background live sync complete kind=${saved.kind} sourceId=${saved.id} channels=${live.channelCount}",
                             )
-                            runCatching {
-                                openTv.catalogRepository.syncVod(
-                                    saved,
-                                    System.currentTimeMillis(),
-                                )
-                            }.onFailure {
-                                Log.w(TAG, "Background VOD sync failed for source ${saved.id}", it)
-                            }
+
+                            // Give the TV UI exclusive breathing room after the first live catalogue
+                            // becomes usable. EPG follows shortly after; VOD/canonical matching is
+                            // deliberately deferred so it cannot compete with the guide for CPU/Room.
+                            delay(EPG_BACKGROUND_DELAY_MS)
                             runCatching {
                                 openTv.epgRepository.syncAll(
                                     nowUtcMillis = System.currentTimeMillis(),
@@ -123,6 +120,16 @@ class OpenTvTellyGraph(context: Context) {
                                 )
                             }.onFailure {
                                 Log.w(TAG, "Background EPG sync failed for source ${saved.id}", it)
+                            }
+
+                            delay(VOD_BACKGROUND_DELAY_MS)
+                            runCatching {
+                                openTv.catalogRepository.syncVod(
+                                    saved,
+                                    System.currentTimeMillis(),
+                                )
+                            }.onFailure {
+                                Log.w(TAG, "Deferred VOD sync failed for source ${saved.id}", it)
                             }
                         }
                     }
@@ -197,6 +204,7 @@ class OpenTvTellyGraph(context: Context) {
                 Log.i(TAG, "M3U live sync complete sourceId=${source.id}")
                 if (!playlist.epgUrl.isNullOrBlank()) {
                     syncScope.launch {
+                        delay(EPG_BACKGROUND_DELAY_MS)
                         runCatching {
                             openTv.epgRepository.syncAll(
                                 nowUtcMillis = System.currentTimeMillis(),
@@ -403,6 +411,8 @@ class OpenTvTellyGraph(context: Context) {
         const val PROVIDER_TEST_TIMEOUT_MS = 20_000L
         const val LIVE_SYNC_TIMEOUT_MS = 120_000L
         const val FIRST_CHANNEL_TIMEOUT_MS = 30_000L
+        const val EPG_BACKGROUND_DELAY_MS = 5_000L
+        const val VOD_BACKGROUND_DELAY_MS = 90_000L
     }
 
     val settings: SettingsGraph =
