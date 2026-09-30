@@ -290,6 +290,70 @@ interface ChannelDao {
 
     @Query(
         """
+        SELECT id, sourceId, displayName, customName, categoryId, logoUrl,
+               epgChannelId, matchedEpgId, epgOverrideId, tvArchive, tvArchiveDays,
+               number, streamUrl, favourite, hidden, sortIndex
+        FROM channels
+        WHERE hidden = 0
+        ORDER BY sortIndex, displayName
+        LIMIT 1
+        """
+    )
+    suspend fun firstVisibleTelly(): TellyChannelRow?
+
+    @Query(
+        """
+        SELECT id, sourceId, displayName, customName, categoryId, logoUrl,
+               epgChannelId, matchedEpgId, epgOverrideId, tvArchive, tvArchiveDays,
+               number, streamUrl, favourite, hidden, sortIndex
+        FROM channels
+        WHERE hidden = 0
+          AND sourceId = :sourceId
+          AND categoryId = :categoryId
+        ORDER BY sortIndex, displayName
+        LIMIT :limit
+        """
+    )
+    suspend fun visibleSnapshotInCategory(
+        sourceId: Long,
+        categoryId: String,
+        limit: Int = 600,
+    ): List<TellyChannelRow>
+
+    @Query(
+        """
+        SELECT c.id, c.sourceId, c.displayName, c.customName, c.categoryId, c.logoUrl,
+               c.epgChannelId, c.matchedEpgId, c.epgOverrideId, c.tvArchive, c.tvArchiveDays,
+               c.number, c.streamUrl, c.favourite, c.hidden, c.sortIndex
+        FROM channels c
+        WHERE c.hidden = 0
+          AND c.sourceId = :sourceId
+          AND c.categoryId = :categoryId
+          AND (
+            c.groupKey = ''
+            OR c.id = (
+                SELECT c2.id
+                FROM channels c2
+                WHERE c2.hidden = 0
+                  AND c2.sourceId = c.sourceId
+                  AND c2.categoryId = c.categoryId
+                  AND c2.groupKey = c.groupKey
+                ORDER BY c2.qualityRank DESC, c2.sortIndex ASC, c2.id ASC
+                LIMIT 1
+            )
+          )
+        ORDER BY c.sortIndex, c.displayName
+        LIMIT :limit
+        """
+    )
+    suspend fun visibleLogicalSnapshotInCategory(
+        sourceId: Long,
+        categoryId: String,
+        limit: Int = 600,
+    ): List<TellyChannelRow>
+
+    @Query(
+        """
         SELECT c.id, c.sourceId, c.displayName, c.customName, c.categoryId, c.logoUrl,
                c.epgChannelId, c.matchedEpgId, c.epgOverrideId, c.tvArchive, c.tvArchiveDays,
                c.number, c.streamUrl, c.favourite, c.hidden, c.sortIndex
