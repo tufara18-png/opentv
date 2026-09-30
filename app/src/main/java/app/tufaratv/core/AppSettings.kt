@@ -252,6 +252,15 @@ class AppSettings private constructor(context: Context) {
      * type's catalogue on the next sync (the speed-up) and hides its tab; already-synced rows are
      * left in place, so turning it back on and refreshing brings everything straight back.
      */
+    /** Whether the TV guide collapses same-name/quality variants into one logical channel. */
+    private val _deduplicateChannels = MutableStateFlow(prefs.getBoolean(KEY_DEDUP_CHANNELS, true))
+    val deduplicateChannels: StateFlow<Boolean> = _deduplicateChannels.asStateFlow()
+
+    fun setDeduplicateChannels(enabled: Boolean) {
+        prefs.edit().putBoolean(KEY_DEDUP_CHANNELS, enabled).apply()
+        _deduplicateChannels.value = enabled
+    }
+
     private val _liveEnabled = MutableStateFlow(prefs.getBoolean(KEY_CONTENT_LIVE, true))
     val liveEnabled: StateFlow<Boolean> = _liveEnabled.asStateFlow()
 
