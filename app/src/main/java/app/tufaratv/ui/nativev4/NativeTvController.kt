@@ -37,6 +37,7 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         private set
 
     private val epgSegments = LinkedHashMap<Int, Map<String, List<Programme>>>()
+    private val epgLoadingSegments = mutableSetOf<Int>()
     private var epgCacheLoadedAt = 0L
 
     private var resumeJob: Job? = null
@@ -64,9 +65,19 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         loadGuide(onReady)
 
     fun loadEpgSegment(centerRow: Int, onReady: (Map<String, List<Programme>>) -> Unit) {
-        scope.launch {
-            loadEpgSegmentInternal(centerRow)
+        val segment = centerRow.coerceAtLeast(0) / EPG_SEGMENT_SIZE
+        if (epgSegments.containsKey(segment)) {
             onReady(programmes)
+            return
+        }
+        if (!epgLoadingSegments.add(segment)) return
+        scope.launch {
+            try {
+                loadEpgSegmentInternal(centerRow)
+                onReady(programmes)
+            } finally {
+                epgLoadingSegments.remove(segment)
+            }
         }
     }
 
@@ -75,6 +86,7 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         val now = System.currentTimeMillis()
         if (now - epgCacheLoadedAt > EPG_CACHE_TTL_MS) {
             epgSegments.clear()
+            epgLoadingSegments.clear()
             programmes = emptyMap()
             epgCacheLoadedAt = now
         }
