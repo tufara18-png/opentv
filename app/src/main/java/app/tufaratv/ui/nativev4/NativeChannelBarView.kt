@@ -7,15 +7,15 @@ import android.view.Gravity
 import android.view.ViewGroup
 import android.widget.LinearLayout
 import android.widget.TextView
-import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.leanback.widget.HorizontalGridView
 import androidx.recyclerview.widget.RecyclerView
 import app.tufaratv.data.db.TellyChannelRow
 
-class NativeChannelBarView(context: Context) : RecyclerView(context) {
+class NativeChannelBarView(context: Context) : HorizontalGridView(context) {
     private val rows = ChannelBarAdapter()
 
     init {
-        layoutManager = LinearLayoutManager(context, HORIZONTAL, false)
+        setNumRows(1)
         adapter = rows
         itemAnimator = null
         setHasFixedSize(true)
