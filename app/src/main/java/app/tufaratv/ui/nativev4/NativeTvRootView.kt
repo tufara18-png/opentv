@@ -320,7 +320,7 @@ class NativeTvRootView(
         }
 
         return when (event.keyCode) {
-            KeyEvent.KEYCODE_BACK -> { showGuide(); true }
+            KeyEvent.KEYCODE_BACK -> { showGuide(preserveAudio = true); true }
             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_ENTER -> { showChannelBar(); true }
             KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_CHANNEL_UP -> {
                 controller.zap(-1)
@@ -355,7 +355,7 @@ class NativeTvRootView(
         quickActions.visibility = GONE
     }
 
-    private fun showGuide() {
+    private fun showGuide(preserveAudio: Boolean = false) {
         exitMultiviewIfNeeded()
         mode = Mode.GUIDE
         handler.removeCallbacks(hideInfo)
@@ -367,7 +367,7 @@ class NativeTvRootView(
         playerFrame.bringToFront()
         topNav.bringToFront()
         settingsDrawer.bringToFront()
-        controller.player.volume = if (settings.guidePreviewSound.value) 1f else 0f
+        controller.player.volume = if (preserveAudio || settings.guidePreviewSound.value) 1f else 0f
 
         playerFrame.pivotX = 0f
         playerFrame.pivotY = 0f
@@ -419,13 +419,13 @@ class NativeTvRootView(
         groupDrawer.visibility = GONE
         mainMenu.submit(
             listOf(
-                NativeMainMenuView.Item("live", "TV Guide") { hideMainMenu(); showGuide() },
-                NativeMainMenuView.Item("movies", "Films") { hideMainMenu(); showVod(NativeVodBrowserView.Mode.MOVIES) },
-                NativeMainMenuView.Item("series", "Séries") { hideMainMenu(); showVod(NativeVodBrowserView.Mode.SERIES) },
-                NativeMainMenuView.Item("search", "Recherche") { hideMainMenu(); showSearch() },
-                NativeMainMenuView.Item("multi", "Multiview") { hideMainMenu(); showMultiview() },
-                NativeMainMenuView.Item("dvr", "Enregistrements") { hideMainMenu(); showRecordings() },
-                NativeMainMenuView.Item("settings", "Réglages") { hideMainMenu(); showSettings() },
+                NativeMainMenuView.Item("live", "TV Guide") { dismissMainMenu { showGuide(preserveAudio = true) } },
+                NativeMainMenuView.Item("movies", "Films") { dismissMainMenu { showVod(NativeVodBrowserView.Mode.MOVIES) } },
+                NativeMainMenuView.Item("series", "Séries") { dismissMainMenu { showVod(NativeVodBrowserView.Mode.SERIES) } },
+                NativeMainMenuView.Item("search", "Recherche") { dismissMainMenu { showSearch() } },
+                NativeMainMenuView.Item("multi", "Multiview") { dismissMainMenu { showMultiview() } },
+                NativeMainMenuView.Item("dvr", "Enregistrements") { dismissMainMenu { showRecordings() } },
+                NativeMainMenuView.Item("settings", "Réglages") { dismissMainMenu { showSettings() } },
             ),
         )
         mainMenu.visibility = VISIBLE
@@ -434,16 +434,22 @@ class NativeTvRootView(
         mainMenu.animate().translationX(0f).setDuration(180).start()
     }
 
-    private fun hideMainMenu() {
+    private fun dismissMainMenu(after: () -> Unit) {
         mainMenu.animate()
             .translationX(-mainMenu.width.toFloat())
             .setDuration(160)
             .withEndAction {
                 mainMenu.visibility = GONE
-                mode = Mode.GUIDE
-                guide.requestFocus()
+                after()
             }
             .start()
+    }
+
+    private fun hideMainMenu() {
+        dismissMainMenu {
+            mode = Mode.GUIDE
+            guide.requestFocus()
+        }
     }
 
     private fun showGroups() {
