@@ -484,9 +484,9 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
     }
 
     private companion object {
-        const val EPG_SEGMENT_SIZE = 160
-        const val EPG_SEGMENT_PREFETCH = 40
-        const val EPG_MAX_SEGMENTS = 6
+        const val EPG_SEGMENT_SIZE = 32
+        const val EPG_SEGMENT_PREFETCH = 8
+        const val EPG_MAX_SEGMENTS = 8
         const val EPG_CACHE_TTL_MS = 90L * 60 * 1000
     }
 }
