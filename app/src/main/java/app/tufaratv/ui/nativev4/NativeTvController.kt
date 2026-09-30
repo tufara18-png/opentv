@@ -7,9 +7,13 @@ import app.tufaratv.data.model.Movie
 import app.tufaratv.data.model.PlaybackPosition
 import app.tufaratv.data.model.Programme
 import app.tufaratv.data.model.Series
+import app.tufaratv.data.model.Recording
+import app.tufaratv.data.model.RecordingStatus
 import app.tufaratv.data.repo.QualitySelector
 import app.tufaratv.data.repo.SourceVariant
 import app.tufaratv.player.PlayerController
+import app.tufaratv.player.SmbDataSource
+import app.tufaratv.player.GrowingRecordingDataSource
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -28,6 +32,8 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         subtitlesEnabled = settings.subtitlesEnabled.value,
         dvr = settings.livePauseEnabled.value,
         sharedLive = true,
+        smbDataSourceFactory = SmbDataSource.Factory(settings),
+        growingDataSourceFactory = GrowingRecordingDataSource.Factory(context),
     )
     val player get() = playerController.player
 
@@ -260,6 +266,53 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
             graph.catalogRepository.ensureEpisodes(source, series.seriesId, series.tmdbId)
         }
         return graph.database.episodes().forSeries(series.sourceId, series.seriesId)
+    }
+
+    suspend fun searchChannels(query: String, limit: Int = 200): List<TellyChannelRow> {
+        val q = query.trim()
+        if (q.isBlank()) return emptyList()
+        return channels.asSequence()
+            .filter {
+                (it.customName?.contains(q, ignoreCase = true) == true) ||
+                    it.displayName.contains(q, ignoreCase = true)
+            }
+            .take(limit)
+            .toList()
+    }
+
+    suspend fun searchMovies(query: String, limit: Int = 120): List<Movie> =
+        graph.database.movies().search(query.trim(), limit).first()
+
+    suspend fun searchSeries(query: String, limit: Int = 120): List<Series> =
+        graph.database.series().search(query.trim(), limit).first()
+
+    suspend fun recordings(): List<Recording> = graph.recordingRepository.all()
+
+    fun playRecording(recording: Recording) {
+        stopVodCheckpointing()
+        val locator = when {
+            recording.status == RecordingStatus.RECORDING -> "optvrec://${recording.id}"
+            recording.filePath.startsWith("/") ->
+                android.net.Uri.fromFile(java.io.File(recording.filePath)).toString()
+            else -> recording.filePath
+        }
+        playerController.play(
+            PlayerController.Request(
+                url = locator,
+                title = recording.title,
+                userAgent = recording.userAgent,
+                isLive = recording.status == RecordingStatus.RECORDING,
+            ),
+            debounce = false,
+        )
+    }
+
+    fun openRecording(id: Long, onFound: ((Recording?) -> Unit)? = null) {
+        scope.launch {
+            val recording = graph.recordingRepository.byId(id)
+            if (recording != null) playRecording(recording)
+            onFound?.invoke(recording)
+        }
     }
 
     fun setSubtitles(enabled: Boolean) {
