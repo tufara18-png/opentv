@@ -15,6 +15,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
+import kotlinx.coroutines.flow.scan
 import kotlinx.coroutines.flow.stateIn
 
 class GuideRowsFeed(
@@ -36,38 +37,47 @@ class GuideRowsFeed(
             .map { first -> first to visibleRows().coerceAtLeast(1) }
             .distinctUntilChanged()
 
+    private val groupChannels: StateFlow<List<ChannelEntity>> =
+        combine(sources.channels, sources.customGroups, sources.selectedGroup) { channels, custom, group ->
+            PanelRows.channelsIn(channels, group, custom)
+        }
+            .distinctUntilChanged()
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
+
     @OptIn(ExperimentalCoroutinesApi::class)
     val rows: StateFlow<List<GuideRow>> =
         combine(
-            sources.channels,
-            sources.customGroups,
+            groupChannels,
             sources.selectedGroup,
             span,
             verticalWindow,
-        ) { list, custom, group, window, vertical ->
+        ) { channels, group, window, vertical ->
             GuideRowsInput(
-                channels = list,
+                channels = channels,
                 group = group,
                 span = window,
-                custom = custom,
                 firstVisibleRow = vertical.first,
                 visibleRowCount = vertical.second,
             )
         }.flatMapLatest { input ->
-            val groupChannels = PanelRows.channelsIn(input.channels, input.group, input.custom)
             val from = (input.firstVisibleRow - VERTICAL_PREFETCH_ROWS).coerceAtLeast(0)
             val to =
                 (input.firstVisibleRow + input.visibleRowCount + VERTICAL_PREFETCH_ROWS)
-                    .coerceAtMost(groupChannels.size)
+                    .coerceAtMost(input.channels.size)
             val epgIds =
                 if (from < to) {
-                    groupChannels.subList(from, to).mapNotNull { it.epgId }
+                    input.channels.subList(from, to).mapNotNull { it.epgId }
                 } else {
                     emptyList()
                 }
             programsFor(epgIds, input.span.fromMs, input.span.toMs)
-                .map { programs -> GuideRowsBuilder.build(input, programs) }
-        }.stateIn(scope, SharingStarted.Eagerly, emptyList())
+                .map { programs -> GuideRowsPayload(input, programs) }
+        }
+            .scan(GuideRowsState.EMPTY) { state, payload ->
+                GuideRowsBuilder.update(state, payload.input, payload.programs)
+            }
+            .map { it.rows }
+            .stateIn(scope, SharingStarted.Eagerly, emptyList())
 
     val groups: StateFlow<List<String>> =
         combine(sources.channels, sources.customGroups, PanelRows::groupNames)
@@ -107,7 +117,11 @@ data class GuideRowsInput(
     val channels: List<ChannelEntity>,
     val group: String,
     val span: GuideSpan,
-    val custom: List<CustomGroup> = emptyList(),
     val firstVisibleRow: Int = 0,
     val visibleRowCount: Int = Int.MAX_VALUE,
+)
+
+internal data class GuideRowsPayload(
+    val input: GuideRowsInput,
+    val programs: List<ProgramEntity>,
 )
