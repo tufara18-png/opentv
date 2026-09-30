@@ -36,7 +36,6 @@ class NativeTvRootView(
     private val playerView = PlayerView(context)
     private val shutter = View(context)
     private val buffering = ProgressBar(context)
-    private val topNav = LinearLayout(context)
     private val infoBar = LinearLayout(context)
     private val infoTitle = TextView(context)
     private val infoSubtitle = TextView(context)
@@ -153,9 +152,6 @@ class NativeTvRootView(
             LayoutParams(dp(52), dp(52), Gravity.CENTER),
         )
         addView(playerFrame, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT))
-
-        buildTopNav()
-        addView(topNav, LayoutParams(LayoutParams.MATCH_PARENT, dp(58), Gravity.TOP))
 
         buildInfoBar()
         addView(infoBar, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT, Gravity.BOTTOM))
@@ -458,11 +454,9 @@ class NativeTvRootView(
         handler.removeCallbacks(hideInfo)
         infoBar.visibility = GONE
         hideAllSurfaces()
-        topNav.visibility = GONE
         guide.visibility = VISIBLE
         guide.bringToFront()
         playerFrame.bringToFront()
-        topNav.bringToFront()
         settingsDrawer.bringToFront()
         controller.player.volume = if (preserveAudio || settings.guidePreviewSound.value) 1f else 0f
 
@@ -485,7 +479,6 @@ class NativeTvRootView(
         handler.removeCallbacks(hideQuick)
         controller.player.volume = 1f
         hideAllSurfaces()
-        topNav.visibility = GONE
         playerFrame.bringToFront()
         infoBar.bringToFront()
 
@@ -643,7 +636,6 @@ class NativeTvRootView(
         mode = Mode.VOD
         hideAllSurfaces()
         guide.visibility = GONE
-        topNav.visibility = GONE
         vod.visibility = VISIBLE
         vod.bringToFront()
         vod.show(vodMode)
@@ -654,7 +646,6 @@ class NativeTvRootView(
         mode = Mode.VOD
         hideAllSurfaces()
         guide.visibility = GONE
-        topNav.visibility = GONE
         vod.visibility = VISIBLE
         vod.bringToFront()
         vod.showSeriesDetail(series)
@@ -665,7 +656,6 @@ class NativeTvRootView(
         mode = Mode.SEARCH
         hideAllSurfaces()
         guide.visibility = GONE
-        topNav.visibility = GONE
         search.visibility = VISIBLE
         search.bringToFront()
         search.focusQuery()
@@ -676,7 +666,6 @@ class NativeTvRootView(
         mode = Mode.RECORDINGS
         hideAllSurfaces()
         guide.visibility = GONE
-        topNav.visibility = GONE
         recordings.visibility = VISIBLE
         recordings.bringToFront()
         recordings.refresh()
@@ -686,7 +675,6 @@ class NativeTvRootView(
         mode = Mode.MULTIVIEW
         hideAllSurfaces()
         guide.visibility = GONE
-        topNav.visibility = GONE
         controller.player.volume = 0f
         multiview.visibility = VISIBLE
         multiview.bringToFront()
@@ -746,28 +734,6 @@ class NativeTvRootView(
         infoBar.bringToFront()
         handler.removeCallbacks(hideInfo)
         handler.postDelayed(hideInfo, 5_000)
-    }
-
-    private fun buildTopNav() {
-        topNav.orientation = LinearLayout.HORIZONTAL
-        topNav.gravity = Gravity.CENTER_VERTICAL
-        topNav.setPadding(dp(22), 0, dp(22), 0)
-        topNav.setBackgroundColor(Color.argb(220, 11, 15, 25))
-        topNav.visibility = GONE
-        addNav("Live") { showGuide() }
-        addNav("Films") { showVod(NativeVodBrowserView.Mode.MOVIES) }
-        addNav("Séries") { showVod(NativeVodBrowserView.Mode.SERIES) }
-        addNav("Recherche") { showSearch() }
-        addNav("Multiview") { showMultiview() }
-        addNav("DVR") { showRecordings() }
-        addNav("Réglages") { showSettings() }
-    }
-
-    private fun addNav(label: String, action: () -> Unit) {
-        topNav.addView(
-            actionButton(label, action),
-            LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f),
-        )
     }
 
     private fun buildInfoBar() {
