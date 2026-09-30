@@ -93,6 +93,12 @@
             </intent-filter>
         </activity>
 
+        <activity
+            android:name=".ui.nativev4.TellyFeatureActivity"
+            android:exported="false"
+            android:screenOrientation="fullUser"
+            android:theme="@style/Theme.TufaraTV" />
+
         <service
             android:name="androidx.media3.session.MediaSessionService"
             android:exported="false"
