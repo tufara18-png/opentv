@@ -53,8 +53,8 @@ class MainActivity : ComponentActivity() {
         handleLaunchIntent(intent)
 
         lifecycleScope.launch {
-            val hasSources = ServiceLocator.get(this@MainActivity).sourceRepository.enabled().isNotEmpty()
-            if (hasSources) {
+            val ready = catalogueReady()
+            if (ready) {
                 mountNativeTv()
             } else {
                 mountOnboarding()
@@ -88,11 +88,16 @@ class MainActivity : ComponentActivity() {
         }
     }
 
-    private suspend fun watchForFirstSource() {
+    private suspend fun catalogueReady(): Boolean {
         val graph = ServiceLocator.get(this)
+        val sources = graph.sourceRepository.enabled()
+        return sources.any { it.lastCatalogSyncMillis > 0L } &&
+            graph.database.channels().totalVisibleCount() > 0
+    }
+
+    private suspend fun watchForFirstSource() {
         while (isActive && nativeRoot == null) {
-            val sources = graph.sourceRepository.enabled()
-            if (sources.isNotEmpty() && graph.database.channels().totalVisibleCount() > 0) {
+            if (catalogueReady()) {
                 mountNativeTv()
                 return
             }
