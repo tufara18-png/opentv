@@ -78,6 +78,11 @@ class NativeMultiviewView(
         return false
     }
 
+    fun stop() {
+        picker.visibility = GONE
+        panes.forEach { it.playerController.stop() }
+    }
+
     fun release() {
         panes.forEach { it.playerController.release() }
     }
