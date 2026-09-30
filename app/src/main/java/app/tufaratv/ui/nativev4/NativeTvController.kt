@@ -239,6 +239,11 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         scope.launch { tuneChannelNow(channelId) }
     }
 
+    fun resyncCurrent() {
+        val id = settings.lastChannelId
+        if (id > 0L) tuneChannel(id)
+    }
+
     fun zap(delta: Int) {
         val list = channels
         if (list.isEmpty()) return
