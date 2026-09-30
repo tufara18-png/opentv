@@ -23,4 +23,3 @@ dependencyResolutionManagement {
 rootProject.name = "TufaraTV"
 include(":app")
 
-include(":tellyFrontend")
