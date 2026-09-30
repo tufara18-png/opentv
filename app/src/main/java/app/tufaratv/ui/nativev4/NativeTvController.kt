@@ -58,12 +58,24 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
 
     fun loadGuide(onReady: (List<TellyChannelRow>, Map<String, List<Programme>>) -> Unit) {
         scope.launch {
-            // Start playback from one indexed row before materialising the guide. The TV should
-            // show the last channel immediately while the large catalogue is prepared off-screen.
+            // Zero-query boot path: start the exact cached stream before touching Room.
+            val cachedPlayback = settings.lastLivePlayback()
+            if (cachedPlayback != null) {
+                playerController.play(
+                    PlayerController.Request(
+                        url = cachedPlayback.url,
+                        title = cachedPlayback.title,
+                        userAgent = cachedPlayback.userAgent,
+                        isLive = true,
+                    ),
+                    debounce = false,
+                )
+            }
+
             val savedId = settings.lastChannelId.takeIf { it > 0L }
             val startupId = savedId?.takeIf { graph.database.channels().byId(it) != null }
                 ?: graph.database.channels().firstVisibleTelly()?.id
-            if (startupId != null) tuneChannelNow(startupId)
+            if (cachedPlayback == null && startupId != null) tuneChannelNow(startupId)
 
             val startupChannel = startupId?.let { graph.database.channels().byId(it) }
             val sourceId = startupChannel?.sourceId
@@ -218,6 +230,7 @@ class NativeTvController(context: Context, private val scope: CoroutineScope) {
         stopVodCheckpointing()
         val request = requestForChannel(channelId) ?: return false
         playerController.play(request, debounce = false)
+        settings.recordLastLivePlayback(channelId, request.url, request.title, request.userAgent)
         settings.recordRecentChannel(channelId)
         return true
     }
